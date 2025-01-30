@@ -26,12 +26,12 @@ template <typename NumericType> struct SF6O2Parameters {
 
   // Mask
   struct MaskType {
-    NumericType rho = 500.; // 1e22 atoms/cm³
-    NumericType beta_F = 0.01;
-    NumericType beta_O = 0.1;
+    NumericType rho = 2.6e22; //500.; // 1e22 atoms/cm³
+    NumericType beta_F = 0.7; //0.01;
+    NumericType beta_O = 1.;  //0.1;
 
-    NumericType Eth_sp = 20.; // eV
-    NumericType A_sp = 0.0139;
+    NumericType Eth_sp = 0.;  //20.; // eV
+    NumericType A_sp = 0.3;   //0.0139;
     NumericType B_sp = 9.3;
   } Mask;
 
@@ -41,11 +41,11 @@ template <typename NumericType> struct SF6O2Parameters {
     NumericType rho = 5.02; // 1e22 atoms/cm³
 
     // sputtering coefficients
-    NumericType Eth_sp = 20.; // eV
-    NumericType Eth_ie = 4.;  // eV
+    NumericType Eth_sp = 0.; //20.; // eV
+    NumericType Eth_ie = 15.; //4.;  // eV
     NumericType A_sp = 0.0337;
     NumericType B_sp = 9.3;
-    NumericType A_ie = 0.0361;
+    NumericType A_ie = 7.;  //0.0361;
 
     // chemical etching
     NumericType k_sigma = 3.0e2;     // in (1e15 cm⁻²s⁻¹)
@@ -55,13 +55,13 @@ template <typename NumericType> struct SF6O2Parameters {
   // Passivation
   struct PassivationType {
     // sputtering coefficients
-    NumericType Eth_ie = 4.; // eV
-    NumericType A_ie = 0.0361;
+    NumericType Eth_ie = 15.;  // 4.; // eV
+    NumericType A_ie   = 3.;   //0.3;  //0.0361;
   } Passivation;
 
   struct IonType {
     NumericType meanEnergy = 100.; // eV
-    NumericType sigmaEnergy = 10.; // eV
+    NumericType sigmaEnergy = 40.; // eV
     NumericType exponent = 500.;
 
     NumericType inflectAngle = 1.55334303;
@@ -114,8 +114,8 @@ public:
       }
 
       if (MaterialMap::isMaterial(materialIds[i], Material::Mask)) {
-        etchRate[i] =
-            -(1 / params.Mask.rho) * ionSputteringRate->at(i) * params.ionFlux;
+        etchRate[i] = 0.;
+            // -(1 / params.Mask.rho) * ionSputteringRate->at(i) * params.ionFlux;
       } else {
         etchRate[i] =
             -(1 / params.Si.rho) * (params.Si.k_sigma * eCoverage->at(i) / 4. +
@@ -244,7 +244,7 @@ public:
     if (cosTheta > 0.5) {
       f_ie_theta = 1.;
     } else {
-      f_ie_theta = 3. - 6. * angle / M_PI;
+      f_ie_theta = std::max(3. - 6. * angle / M_PI, 0.);
     }
     NumericType A_sp = params.Si.A_sp;
     NumericType B_sp = params.Si.B_sp;
@@ -258,7 +258,7 @@ public:
     NumericType f_sp_theta = (1 + B_sp * (1 - cosTheta * cosTheta)) * cosTheta;
 
     double sqrtE = std::sqrt(E);
-    NumericType Y_sp =
+    NumericType Y_sp = 
         params.Si.A_sp * std::max(sqrtE - std::sqrt(Eth_sp), 0.) * f_sp_theta;
     NumericType Y_Si = params.Si.A_ie *
                        std::max(sqrtE - std::sqrt(params.Si.Eth_ie), 0.) *
@@ -317,7 +317,7 @@ public:
     if (NewEnergy > params.Si.Eth_ie) {
       E = NewEnergy;
       auto direction = viennaray::ReflectionConedCosine<NumericType, D>(
-          rayDir, geomNormal, Rng, std::max(incAngle, params.Ions.minAngle));
+          rayDir, geomNormal, Rng, M_PI_2 - std::min(incAngle, params.Ions.minAngle));//std::max(incAngle, params.Ions.minAngle));
       return std::pair<NumericType, Vec3D<NumericType>>{0., direction};
     } else {
       return std::pair<NumericType, Vec3D<NumericType>>{
@@ -412,11 +412,13 @@ public:
 
     // F surface coverage
     const auto &phi_F = globalData->getVectorData(0)[primID];
+    // O surface coverage
+    const auto &phi_O = globalData->getVectorData(1)[primID];
     // Obtain the sticking probability
     NumericType beta = params.beta_F;
     if (MaterialMap::isMaterial(materialId, Material::Mask))
       beta = params.Mask.beta_F;
-    NumericType S_eff = beta * std::max(1. - phi_F, 0.);
+    NumericType S_eff = beta * std::max(1. - phi_F - phi_O, 0.);
 
     auto direction =
         viennaray::ReflectionDiffuse<NumericType, D>(geomNormal, rngState);
@@ -485,7 +487,7 @@ public:
                const double oxygenFlux, const NumericType meanEnergy /* eV */,
                const NumericType sigmaEnergy /* eV */, // 5 parameters
                const NumericType ionExponent = 300.,
-               const NumericType oxySputterYield = 2.,
+               const NumericType oxySputterYield = 3.,
                const NumericType etchStopDepth =
                    std::numeric_limits<NumericType>::lowest()) {
     params.ionFlux = ionFlux;

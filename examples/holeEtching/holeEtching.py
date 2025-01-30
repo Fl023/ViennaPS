@@ -16,8 +16,17 @@ else:
 
 params = vps.ReadConfigFile(args.filename)
 
-# print intermediate output surfaces during the process
-vps.Logger.setLogLevel(vps.LogLevel.INTERMEDIATE)
+# print error output surfaces during the process
+vps.Logger.setLogLevel(vps.LogLevel.INFO)
+
+# Map the shape string to the corresponding vps.HoleShape enum
+shape_map = {
+    "Full": vps.HoleShape.Full,
+    "Half": vps.HoleShape.Half,
+    "Quarter": vps.HoleShape.Quarter,
+}
+
+hole_shape_str = params.get("holeShape", "Full").strip()
 
 # geometry setup, all units in um
 geometry = vps.Domain()
@@ -29,6 +38,8 @@ vps.MakeHole(
     holeRadius=params["holeRadius"],
     holeDepth=params["maskHeight"],
     taperingAngle=params["taperAngle"],
+    holeShape=shape_map[hole_shape_str],
+    periodicBoundary=False,
     makeMask=True,
     material=vps.Material.Si,
 ).apply()
@@ -44,7 +55,7 @@ model = vps.SF6O2Etching(
     etchStopDepth=params["etchStopDepth"],
 )
 parameters = model.getParameters()
-parameters.Mask.rho = 100.
+parameters.Mask.rho = 2.6
 
 # process setup
 process = vps.Process()
@@ -52,13 +63,16 @@ process.setDomain(geometry)
 process.setProcessModel(model)
 process.setMaxCoverageInitIterations(10)
 process.setNumberOfRaysPerPoint(int(params["raysPerPoint"]))
-process.setProcessDuration(params["processTime"])  # seconds
-
+process.setProcessDuration(params["processTime"]/10)  # seconds
+process.setTimeStepRatio(0.2)
 # print initial surface
 geometry.saveSurfaceMesh(filename="initial.vtp", addMaterialIds=True)
 
-# run the process
-process.apply()
+for i in range (1,11):
+    # run the process
+    process.apply()
+    # print intermediate surface
+    geometry.saveSurfaceMesh(filename=f"intermediate_{i}.vtp", addMaterialIds=True)
 
 # print final surface
 geometry.saveSurfaceMesh(filename="final.vtp", addMaterialIds=True)

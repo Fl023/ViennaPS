@@ -13,9 +13,23 @@ args = parser.parse_args()
 if args.dim == 2:
     print("Running 2D simulation.")
     import viennaps2d as vps
+
+    useGPU = False  # GPU support is not available for 2D
 else:
     print("Running 3D simulation.")
     import viennaps3d as vps
+
+    # Check if GPU support is available
+    useGPU = True
+    try:
+        import viennaps3d.viennaps3d.gpu as gpu
+
+        context = gpu.Context()
+        context.create(modulePath=vps.ptxPath)
+        print("Using GPU.")
+
+    except ImportError:
+        useGPU = False
 
 params = vps.ReadConfigFile(args.filename)
 
@@ -33,13 +47,24 @@ vps.MakeTrench(
 
 geometry.duplicateTopLevelSet(vps.Material.SiO2)
 
-model = vps.SingleParticleProcess(
-    stickingProbability=params["stickingProbability"],
-    sourceExponent=params["sourcePower"],
+model = (
+    gpu.SingleParticleProcess(
+        stickingProbability=params["stickingProbability"],
+        sourceExponent=params["sourcePower"],
+    )
+    if useGPU
+    else vps.SingleParticleProcess(
+        stickingProbability=params["stickingProbability"],
+        sourceExponent=params["sourcePower"],
+    )
 )
 
 geometry.saveHullMesh("initial")
 
-vps.Process(geometry, model, params["processTime"]).apply()
+process = gpu.Process(context) if useGPU else vps.Process()
+process.setDomain(geometry)
+process.setProcessModel(model)
+process.setProcessDuration(params["processTime"])
+process.apply()
 
 geometry.saveHullMesh("final")

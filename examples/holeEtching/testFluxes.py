@@ -12,9 +12,23 @@ args = parser.parse_args()
 if args.dim == 2:
     print("Running 2D simulation.")
     import viennaps2d as vps
+
+    useGPU = False  # GPU support is not available for 2D
 else:
     print("Running 3D simulation.")
     import viennaps3d as vps
+
+    # Check if GPU support is available
+    useGPU = True
+    try:
+        import viennaps3d.viennaps3d.gpu as gpu
+
+        context = gpu.Context()
+        context.create(modulePath=vps.ptxPath)
+        print("Using GPU.")
+
+    except ImportError:
+        useGPU = False
 
 vps.setNumThreads(16)
 vps.Logger.setLogLevel(vps.LogLevel.INFO)
@@ -74,7 +88,7 @@ for i in range(len(yo2)):
         # holeShape=vps.HoleShape.Half,
     ).apply()
 
-    process = vps.Process()
+    process = gpu.Process(context) if useGPU else vps.Process()
     process.setDomain(geometry)
     process.setMaxCoverageInitIterations(20)
     process.setCoverageDeltaThreshold(1e-4)
@@ -87,7 +101,7 @@ for i in range(len(yo2)):
     params.passivationFlux = oxygenFlux[i]
     params.Passivation.A_ie = A_O[i]
 
-    model = vps.SF6O2Etching(params)
+    model = gpu.SF6O2Etching(params) if useGPU else vps.SF6O2Etching(params)
 
     process.setProcessModel(model)
     process.apply()

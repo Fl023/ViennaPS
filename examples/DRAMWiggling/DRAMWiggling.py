@@ -1,6 +1,18 @@
 import viennaps3d as vps
 from argparse import ArgumentParser
 
+# Check if GPU support is available
+useGPU = True
+try:
+    import viennaps3d.viennaps3d.gpu as gpu
+
+    context = gpu.Context()
+    context.create(modulePath=vps.ptxPath)
+    print("Using GPU.")
+
+except ImportError:
+    useGPU = False
+
 # parse config file name and simulation dimension
 parser = ArgumentParser(
     prog="DRAMWiggling",
@@ -47,10 +59,10 @@ modelParams.Ions.meanEnergy = params["meanEnergy"]
 modelParams.Ions.sigmaEnergy = params["sigmaEnergy"]
 modelParams.Ions.exponent = params["ionExponent"]
 modelParams.Ions.n_l = 200
-model = vps.HBrO2Etching(modelParams)
+model = gpu.HBrO2Etching(modelParams) if useGPU else vps.HBrO2Etching(modelParams)
 
 # process setup
-process = vps.Process()
+process = gpu.Process(context) if useGPU else vps.Process()
 process.setDomain(geometry)
 process.setProcessModel(model)
 process.setMaxCoverageInitIterations(10)

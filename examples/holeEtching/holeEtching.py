@@ -10,9 +10,23 @@ args = parser.parse_args()
 if args.dim == 2:
     print("Running 2D simulation.")
     import viennaps2d as vps
+
+    useGPU = False  # GPU support is not available for 2D
 else:
     print("Running 3D simulation.")
     import viennaps3d as vps
+
+    # Check if GPU support is available
+    useGPU = True
+    try:
+        import viennaps3d.viennaps3d.gpu as gpu
+
+        context = gpu.Context()
+        context.create(modulePath=vps.ptxPath)
+        print("Using GPU.")
+
+    except ImportError:
+        useGPU = False
 
 params = vps.ReadConfigFile(args.filename)
 
@@ -48,10 +62,10 @@ modelParams.Ions.exponent = params["ionExponent"]
 modelParams.Passivation.A_ie = params["A_O"]
 modelParams.Substrate.A_ie = params["A_Si"]
 modelParams.etchStopDepth = params["etchStopDepth"]
-model = vps.SF6O2Etching(modelParams)
+model = gpu.SF6O2Etching(modelParams) if useGPU else vps.SF6O2Etching(modelParams)
 
 # process setup
-process = vps.Process()
+process = gpu.Process(context) if useGPU else vps.Process()
 process.setDomain(geometry)
 process.setProcessModel(model)
 process.setMaxCoverageInitIterations(20)

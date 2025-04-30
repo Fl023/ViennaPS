@@ -2,7 +2,7 @@
 # 3D Bosch process simulation using ray tracing
 # Replicates the results from:
 #   Ertl and Selberherr https://doi.org/10.1016/j.mee.2009.05.011
-# Execute: 
+# Execute:
 #   python boschProcessRayTracing.py -D 3 configBoschRayTracing.txt
 #####################################################################
 
@@ -21,9 +21,23 @@ args = parser.parse_args()
 if args.dim == 2:
     print("Running 2D simulation.")
     import viennaps2d as vps
+
+    useGPU = False  # GPU support is not available for 2D
 else:
     print("Running 3D simulation.")
     import viennaps3d as vps
+
+    # Check if GPU support is available
+    useGPU = True
+    try:
+        import viennaps3d.viennaps3d.gpu as gpu
+
+        context = gpu.Context()
+        context.create(modulePath=vps.ptxPath)
+        print("Using GPU.")
+
+    except ImportError:
+        useGPU = False
 
 params = vps.ReadConfigFile(args.filename)
 
@@ -54,48 +68,56 @@ vps.MakeHole(
     holeShape=shape_map[hole_shape_str],
 ).apply()
 
-depoModel = vps.MultiParticleProcess()
+depoModel = gpu.MultiParticleProcess() if useGPU else vps.MultiParticleProcess()
 depoModel.addNeutralParticle(params["stickingDep"])
 depoModel.addIonParticle(params["ionSourceExponent"])
 
-etchModel = vps.MultiParticleProcess()
-materialStickingEtch = {vps.Material.Si: params["stickingEtchSubs"], 
-                         vps.Material.Mask: params["stickingEtchMask"],
-                         vps.Material.Polymer: params["stickingEtchPoly"]}
+etchModel = gpu.MultiParticleProcess() if useGPU else vps.MultiParticleProcess()
+materialStickingEtch = {
+    vps.Material.Si: params["stickingEtchSubs"],
+    vps.Material.Mask: params["stickingEtchMask"],
+    vps.Material.Polymer: params["stickingEtchPoly"],
+}
 etchModel.addNeutralParticle(materialStickingEtch, defaultStickingProbability=1.0)
 etchModel.addIonParticle(params["ionSourceExponent"])
 
 # Conversion factors
-A2c = 1e-8 # 1 angstrom = 1e-8 cm
+A2c = 1e-8  # 1 angstrom = 1e-8 cm
 c2u = 1e4  # 1 cm = 1e4 micrometers
 
 # Rate calculations for the depo model
-alphaDep   = params["alphaDep"] * (A2c ** 3)      # [cm^3/atom]
-ionDepRate = alphaDep * params["Flux_ionD"] * c2u # [um/s]
-betaDep    = params["betaDep"] * (A2c ** 3)       # [cm^3/atom]
+alphaDep = params["alphaDep"] * (A2c**3)  # [cm^3/atom]
+ionDepRate = alphaDep * params["Flux_ionD"] * c2u  # [um/s]
+betaDep = params["betaDep"] * (A2c**3)  # [cm^3/atom]
 neuDepRate = betaDep * params["Flux_neuD"] * c2u  # [um/s]
 # Print the result
 print(f"Deposition cycle:")
 print(f"Poly deposit rate (ion, neutral): {ionDepRate:.3e} μm/s, {neuDepRate:.3e} μm/s")
 
 # Rate calculations for the etch model
-alphaPoly   = params["alphaPoly"] * (A2c ** 3)     # [cm^3/atom]
-alphaSubs   = params["alphaSubs"] * (A2c ** 3)     # [cm^3/atom]
-alphaMask   = params["alphaMask"] * (A2c ** 3)     # [cm^3/atom]
-ionEtchRatePoly = alphaPoly * params["Flux_ionE"] * c2u # [um/s]
-ionEtchRateSubs = alphaSubs * params["Flux_ionE"] * c2u # [um/s]
-ionEtchRateMask = alphaMask * params["Flux_ionE"] * c2u # [um/s]
-betaPoly   = params["betaPoly"] * (A2c ** 3)       # [cm^3/atom]
-betaSubs   = params["betaSubs"] * (A2c ** 3)       # [cm^3/atom]
-betaMask   = params["betaMask"] * (A2c ** 3)       # [cm^3/atom]
-neuEtchRatePoly = betaPoly * params["Flux_neuE"] * c2u # [um/s]
-neuEtchRateSubs = betaSubs * params["Flux_neuE"] * c2u # [um/s]
-neuEtchRateMask = betaMask * params["Flux_neuE"] * c2u # [um/s]
+alphaPoly = params["alphaPoly"] * (A2c**3)  # [cm^3/atom]
+alphaSubs = params["alphaSubs"] * (A2c**3)  # [cm^3/atom]
+alphaMask = params["alphaMask"] * (A2c**3)  # [cm^3/atom]
+ionEtchRatePoly = alphaPoly * params["Flux_ionE"] * c2u  # [um/s]
+ionEtchRateSubs = alphaSubs * params["Flux_ionE"] * c2u  # [um/s]
+ionEtchRateMask = alphaMask * params["Flux_ionE"] * c2u  # [um/s]
+betaPoly = params["betaPoly"] * (A2c**3)  # [cm^3/atom]
+betaSubs = params["betaSubs"] * (A2c**3)  # [cm^3/atom]
+betaMask = params["betaMask"] * (A2c**3)  # [cm^3/atom]
+neuEtchRatePoly = betaPoly * params["Flux_neuE"] * c2u  # [um/s]
+neuEtchRateSubs = betaSubs * params["Flux_neuE"] * c2u  # [um/s]
+neuEtchRateMask = betaMask * params["Flux_neuE"] * c2u  # [um/s]
 # Print the result
 print(f"Etching cycle:")
-print(f"Mask etching rate (ion, neutral): {ionEtchRateMask:.3e} μm/s, {neuEtchRateMask:.3e} μm/s")
-print(f"Poly etching rate (ion, neutral): {ionEtchRatePoly:.3e} μm/s, {neuEtchRatePoly:.3e} μm/s")
-print(f"Subs etching rate (ion, neutral): {ionEtchRateSubs:.3e} μm/s, {neuEtchRateSubs:.3e} μm/s")
+print(
+    f"Mask etching rate (ion, neutral): {ionEtchRateMask:.3e} μm/s, {neuEtchRateMask:.3e} μm/s"
+)
+print(
+    f"Poly etching rate (ion, neutral): {ionEtchRatePoly:.3e} μm/s, {neuEtchRatePoly:.3e} μm/s"
+)
+print(
+    f"Subs etching rate (ion, neutral): {ionEtchRateSubs:.3e} μm/s, {neuEtchRateSubs:.3e} μm/s"
+)
 
 
 def rateFunctionDep(fluxes, material):
@@ -118,9 +140,15 @@ def rateFunctionEtch(fluxes, material):
 depoModel.setRateFunction(rateFunctionDep)
 etchModel.setRateFunction(rateFunctionEtch)
 
-depoProcess = vps.Process(geometry, depoModel, params["depTime"])
+depoProcess = gpu.Process(context) if useGPU else vps.Process()
+depoProcess.setDomain(geometry)
+depoProcess.setProcessModel(depoModel)
+depoProcess.setProcessDuration(params["depTime"])
 depoProcess.setTimeStepRatio(0.2)
-etchProcess = vps.Process(geometry, etchModel, params["etchTime"])
+etchProcess = gpu.Process(context) if useGPU else vps.Process()
+etchProcess.setDomain(geometry)
+etchProcess.setProcessModel(etchModel)
+etchProcess.setProcessDuration(params["etchTime"])
 etchProcess.setTimeStepRatio(0.2)
 
 geometry.saveSurfaceMesh("initial.vtp")

@@ -2,9 +2,11 @@
 
 #include <cmath>
 
+#include "../psConstants.hpp"
 #include "../psMaterials.hpp"
 #include "../psProcessModel.hpp"
 #include "../psUnits.hpp"
+#include "psFluorocarbonParameters.hpp"
 
 #include <rayParticle.hpp>
 #include <rayReflection.hpp>
@@ -15,113 +17,6 @@
 namespace viennaps {
 
 using namespace viennacore;
-
-// Parameters from:
-// A. LaMagna and G. Garozzo "Factors affecting profile evolution in plasma
-// etching of SiO2: Modeling and experimental verification" Journal of the
-// Electrochemical Society 150(10) 2003 pp. 1896-1902
-
-template <typename NumericType> struct FluorocarbonParameters {
-  // fluxes in (1e15 /cm² /s)
-  NumericType ionFlux = 56.;
-  NumericType etchantFlux = 500.;
-  NumericType polyFlux = 100.;
-
-  NumericType delta_p = 1.;
-  NumericType etchStopDepth = std::numeric_limits<NumericType>::lowest();
-
-  NumericType temperature = 300.; // K
-  NumericType k_ie = 2.;
-  NumericType k_ev = 2.;
-
-  NumericType beta_pe = 0.6;
-  NumericType beta_p = 0.26;
-  NumericType beta_e = 0.9;
-
-  // Mask
-  struct MaskType {
-    NumericType rho = 500.; // 1e22 atoms/cm³
-    NumericType beta_p = 0.01;
-    NumericType beta_e = 0.1;
-
-    NumericType A_sp = 0.0139;
-    NumericType B_sp = 9.3;
-    NumericType Eth_sp = 20.; // eV
-  } Mask;
-
-  // SiO2
-  struct SiO2Type {
-    // density
-    NumericType rho = 2.2; // 1e22 atoms/cm³
-
-    // sputtering coefficients
-    NumericType Eth_sp = 18.; // eV
-    NumericType Eth_ie = 4.;  // eV
-    NumericType A_sp = 0.0139;
-    NumericType B_sp = 9.3;
-    NumericType A_ie = 0.0361;
-
-    // chemical etching
-    NumericType K = 0.002789491704544977;
-    NumericType E_a = 0.168; // eV
-  } SiO2;
-
-  // Polymer
-  struct PolymerType {
-    NumericType rho = 2.; // 1e22 atoms/cm³
-
-    // sputtering coefficients
-    NumericType Eth_ie = 4.; // eV
-    NumericType A_ie = 0.0361 * 4;
-  } Polymer;
-
-  // Si3N4
-  struct Si3N4Type {
-    // density
-    NumericType rho = 2.3; // 1e22 atoms/cm³
-
-    // sputtering coefficients
-    NumericType Eth_sp = 18.; // eV
-    NumericType Eth_ie = 4.;  // eV
-    NumericType A_sp = 0.0139;
-    NumericType B_sp = 9.3;
-    NumericType A_ie = 0.0361;
-
-    // chemical etching
-    NumericType K = 0.002789491704544977;
-    NumericType E_a = 0.168; // eV
-  } Si3N4;
-
-  // Si
-  struct SiType {
-    // density
-    NumericType rho = 5.02; // 1e22 atoms/cm³
-
-    // sputtering coefficients
-    NumericType Eth_sp = 20.; // eV
-    NumericType Eth_ie = 4.;  // eV
-    NumericType A_sp = 0.0337;
-    NumericType B_sp = 9.3;
-    NumericType A_ie = 0.0361;
-
-    // chemical etching
-    NumericType K = 0.029997010728956663;
-    NumericType E_a = 0.108; // eV
-  } Si;
-
-  struct IonType {
-    NumericType meanEnergy = 100.; // eV
-    NumericType sigmaEnergy = 10.; // eV
-    NumericType exponent = 500.;
-
-    NumericType inflectAngle = 1.55334303;
-    NumericType n_l = 10.;
-    NumericType minAngle = 1.3962634;
-  } Ions;
-
-  // fixed
-  static constexpr double kB = 8.617333262 * 1e-5; // eV / K
-};
 
 namespace impl {
 
@@ -236,25 +131,20 @@ public:
 
           density = -p.Si.rho;
           F_ev = p.Si.K * p.etchantFlux *
-                 std::exp(-p.Si.E_a / (FluorocarbonParameters<NumericType>::kB *
-                                       p.temperature));
+                 std::exp(-p.Si.E_a / (constants::kB * p.temperature));
           break;
         }
         case Material::SiO2: {
 
-          F_ev =
-              p.SiO2.K * p.etchantFlux *
-              std::exp(-p.SiO2.E_a / (FluorocarbonParameters<NumericType>::kB *
-                                      p.temperature));
+          F_ev = p.SiO2.K * p.etchantFlux *
+                 std::exp(-p.SiO2.E_a / (constants::kB * p.temperature));
           density = -p.SiO2.rho;
           break;
         }
         case Material::Si3N4: {
 
-          F_ev =
-              p.Si3N4.K * p.etchantFlux *
-              std::exp(-p.Si3N4.E_a / (FluorocarbonParameters<NumericType>::kB *
-                                       p.temperature));
+          F_ev = p.Si3N4.K * p.etchantFlux *
+                 std::exp(-p.Si3N4.E_a / (constants::kB * p.temperature));
           density = -p.Si3N4.rho;
           break;
         }
@@ -341,22 +231,16 @@ public:
           NumericType F_ev = 0.;
           switch (MaterialMap::mapToMaterial(materialIds[i])) {
           case Material::Si:
-            F_ev =
-                p.Si.K * p.etchantFlux *
-                std::exp(-p.Si.E_a / (FluorocarbonParameters<NumericType>::kB *
-                                      p.temperature));
+            F_ev = p.Si.K * p.etchantFlux *
+                   std::exp(-p.Si.E_a / (constants::kB * p.temperature));
             break;
           case Material::SiO2:
             F_ev = p.SiO2.K * p.etchantFlux *
-                   std::exp(-p.SiO2.E_a /
-                            (FluorocarbonParameters<NumericType>::kB *
-                             p.temperature));
+                   std::exp(-p.SiO2.E_a / (constants::kB * p.temperature));
             break;
           case Material::Si3N4:
             F_ev = p.Si3N4.K * p.etchantFlux *
-                   std::exp(-p.Si3N4.E_a /
-                            (FluorocarbonParameters<NumericType>::kB *
-                             p.temperature));
+                   std::exp(-p.Si3N4.E_a / (constants::kB * p.temperature));
             break;
           default:
             F_ev = 0.;
@@ -398,7 +282,8 @@ public:
     assert(primID < localData.getVectorData(0).size() && "id out of bounds");
     assert(E >= 0 && "Negative energy ion");
 
-    const auto cosTheta = -rayInternal::DotProduct(rayDir, geomNormal);
+    const auto cosTheta = std::clamp(-DotProduct(rayDir, geomNormal),
+                                     NumericType(0), NumericType(1));
 
     assert(cosTheta >= 0 && "Hit backside of disc");
     assert(cosTheta <= 1 + 4 && "Error in calculating cos theta");
@@ -471,7 +356,8 @@ public:
 
     // Small incident angles are reflected with the energy fraction centered at
     // 0
-    NumericType incAngle = std::acos(-DotProduct(rayDir, geomNormal));
+    NumericType incAngle = std::acos(std::clamp(
+        -DotProduct(rayDir, geomNormal), NumericType(0), NumericType(1)));
     NumericType Eref_peak;
     if (incAngle >= p.Ions.inflectAngle) {
       Eref_peak =
@@ -489,7 +375,8 @@ public:
     if (newEnergy > minEnergy) {
       E = newEnergy;
       auto direction = viennaray::ReflectionConedCosine<NumericType, D>(
-          rayDir, geomNormal, Rng, std::max(incAngle, p.Ions.minAngle));
+          rayDir, geomNormal, Rng,
+          M_PI_2 - std::min(incAngle, p.Ions.minAngle));
       return std::pair<NumericType, Vec3D<NumericType>>{0., direction};
     } else {
       return std::pair<NumericType, Vec3D<NumericType>>{
@@ -540,7 +427,6 @@ public:
 
     const auto &phi_e = globalData->getVectorData(0)[primID];
     const auto &phi_p = globalData->getVectorData(1)[primID];
-    const auto &phi_pe = globalData->getVectorData(2)[primID];
 
     NumericType stick = 1.;
     if (MaterialMap::isMaterial(materialId, Material::Mask))

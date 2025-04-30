@@ -49,9 +49,9 @@ public:
 template <typename NumericType, int D>
 class Ion : public viennaray::Particle<Ion<NumericType, D>, NumericType> {
 public:
-  Ion(const NumericType stickingProbability, const NumericType exponent,
-      const NumericType minAngle)
-      : stickingProbability_(stickingProbability), exponent_(exponent),
+  Ion(const NumericType thetaRMin, const NumericType thetaRMax,
+      const NumericType exponent, const NumericType minAngle)
+      : thetaRMin_(thetaRMin), thetaRMax_(thetaRMax), exponent_(exponent),
         minAngle_(minAngle) {}
 
   std::pair<NumericType, Vec3D<NumericType>>
@@ -64,10 +64,16 @@ public:
                                NumericType(1));
     NumericType incAngle = std::acos(cosTheta);
 
+    NumericType sticking = 1.;
+    if (incAngle > thetaRMin_) {
+      sticking =
+          1. -
+          std::min((incAngle - thetaRMin_) / (thetaRMax_ - thetaRMin_), 1.);
+    }
+
     auto direction = viennaray::ReflectionConedCosine<NumericType, D>(
         rayDir, geomNormal, Rng, std::max(incAngle, minAngle_));
-    return std::pair<NumericType, Vec3D<NumericType>>{stickingProbability_,
-                                                      direction};
+    return std::pair<NumericType, Vec3D<NumericType>>{sticking, direction};
   }
 
   void surfaceCollision(NumericType rayWeight, const Vec3D<NumericType> &rayDir,
@@ -85,7 +91,8 @@ public:
   }
 
 private:
-  const NumericType stickingProbability_;
+  const NumericType thetaRMin_;
+  const NumericType thetaRMax_;
   const NumericType exponent_;
   const NumericType minAngle_;
 };
@@ -96,10 +103,11 @@ class TEOSPECVD : public ProcessModel<NumericType, D> {
 public:
   TEOSPECVD(const NumericType radicalSticking, const NumericType radicalRate,
             const NumericType ionRate, const NumericType ionExponent,
-            const NumericType ionSticking = 1.,
+            const NumericType ionThetaRMin = 60.,
+            const NumericType ionThetaRMax = 90.,
+            const NumericType ionMinAngle = 0.,
             const NumericType radicalOrder = 1.,
-            const NumericType ionOrder = 1.,
-            const NumericType ionMinAngle = 0.) {
+            const NumericType ionOrder = 1.) {
     // velocity field
     auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New(2);
     this->setVelocityField(velField);
@@ -108,7 +116,8 @@ public:
     auto radical = std::make_unique<viennaray::DiffuseParticle<NumericType, D>>(
         radicalSticking, "radicalFlux");
     auto ion = std::make_unique<impl::Ion<NumericType, D>>(
-        ionSticking, ionExponent, ionMinAngle);
+        constants::degToRad(ionThetaRMin), constants::degToRad(ionThetaRMax),
+        ionExponent, ionMinAngle);
 
     // surface model
     auto surfModel = SmartPointer<impl::PECVDSurfaceModel<NumericType>>::New(

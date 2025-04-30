@@ -91,6 +91,7 @@
 #include <models/psgMultiParticleProcess.hpp>
 #include <models/psgSF6O2Etching.hpp>
 #include <models/psgSingleParticleProcess.hpp>
+#include <models/psgTEOSPECVD.hpp>
 
 #include <psgProcess.hpp>
 #endif
@@ -808,18 +809,18 @@ PYBIND11_MODULE(VIENNAPS_MODULE_NAME, module) {
   // TEOS PE-CVD
   pybind11::class_<TEOSPECVD<T, D>, SmartPointer<TEOSPECVD<T, D>>>(
       module, "TEOSPECVD", processModel)
-      .def(
-          pybind11::init(&SmartPointer<TEOSPECVD<T, D>>::New<
-                         const T /*stR*/, const T /*rateR*/, const T /*orderR*/,
-                         const T /*stI*/, const T /*rateI*/, const T /*orderI*/,
-                         const T /*exponentI*/, const T /*minAngleIon*/>),
-          pybind11::arg("stickingProbabilityRadical"),
-          pybind11::arg("depositionRateRadical"),
-          pybind11::arg("depositionRateIon"), pybind11::arg("exponentIon"),
-          pybind11::arg("stickingProbabilityIon") = 1.,
-          pybind11::arg("reactionOrderRadical") = 1.,
-          pybind11::arg("reactionOrderIon") = 1.,
-          pybind11::arg("minAngleIon") = 0.);
+      .def(pybind11::init(&SmartPointer<TEOSPECVD<T, D>>::New<
+                          const T /*stR*/, const T /*rateR*/, const T /*rateI*/,
+                          const T /*exponentI*/, const T /*tRMin*/,
+                          const T /*tRMax*/, const T /*minAngleI*/,
+                          const T /*orderR*/, const T /*orderI*/>),
+           pybind11::arg("stickingProbabilityRadical"),
+           pybind11::arg("depositionRateRadical"),
+           pybind11::arg("depositionRateIon"), pybind11::arg("exponentIon"),
+           pybind11::arg("ionThetaRMin") = 60.,
+           pybind11::arg("ionThetaRMax") = 90.,
+           pybind11::arg("ionMinAngle") = 0.,
+           pybind11::arg("radicalOrder") = 1., pybind11::arg("ionOrder") = 1.);
 
   // SF6O2 Parameters
   pybind11::class_<PlasmaEtchingParameters<T>::MaskType>(
@@ -2176,6 +2177,22 @@ PYBIND11_MODULE(VIENNAPS_MODULE_NAME, module) {
           pybind11::arg("rate"), pybind11::arg("stickingProbability"),
           pybind11::arg("power"), pybind11::arg("cageAngle"),
           pybind11::arg("cageDistance"));
+
+  // TEOS PE-CVD
+  pybind11::class_<gpu::TEOSPECVD<T, D>, SmartPointer<gpu::TEOSPECVD<T, D>>>(
+      module, "TEOSPECVD", processModel_gpu)
+      .def(pybind11::init(&SmartPointer<gpu::TEOSPECVD<T, D>>::New<
+                          const T /*stR*/, const T /*rateR*/, const T /*rateI*/,
+                          const T /*exponentI*/, const T /*tRMin*/,
+                          const T /*tRMax*/, const T /*minAngleI*/,
+                          const T /*orderR*/, const T /*orderI*/>),
+           pybind11::arg("stickingProbabilityRadical"),
+           pybind11::arg("depositionRateRadical"),
+           pybind11::arg("depositionRateIon"), pybind11::arg("exponentIon"),
+           pybind11::arg("ionThetaRMin") = 60.,
+           pybind11::arg("ionThetaRMax") = 90.,
+           pybind11::arg("ionMinAngle") = 0.,
+           pybind11::arg("radicalOrder") = 1., pybind11::arg("ionOrder") = 1.);
 
   // GPU Process
   pybind11::class_<gpu::Process<T, D>>(m_gpu, "Process",

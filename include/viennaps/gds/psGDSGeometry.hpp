@@ -146,8 +146,6 @@ public:
                                             weights);
     proximity.apply();
 
-    // exposureGrid is the final blurred grid to be used for SDF calculation
-    // auto exposureGrid = proximity.getExposedGrid();
     if (lsInternal::Logger::getLogLevel() >= 5)
       proximity.saveGridToCSV("finalGrid.csv");
 
@@ -179,11 +177,10 @@ public:
           pos[0] = x;
           pos[1] = y;
           pointData.emplace_back(pos, 0.);
-          break;
+          continue;
         }
 
         double minDist = std::numeric_limits<double>::max();
-        int bestNx = -1, bestNy = -1;
         bool found = false;
 
         for (auto [dy, dx] : directions) {
@@ -194,26 +191,33 @@ public:
 
           double neighbor = proximity.exposureAt(nxReal, nyReal);
 
-          // Check if neighbor is on the contour
-          // If so, skip checks and add neighbor when it becomes "current"
-          if (std::abs(neighbor - threshold) < thresholdEps)
-            break;
+          double valCur = current - threshold;
+          double valNei = neighbor - threshold;
 
           // Check if neighbor is on opposite side of the contour
-          if ((current - threshold) * (neighbor - threshold) < 0) {
+          if (valCur * valNei < 0) {
             // Interpolate sub-cell distance
             double dist =
-                std::abs((threshold - current) / (neighbor - current));
+                std::abs(valCur / (valNei - valCur));
             if (dist < minDist) {
               minDist = dist;
-              bestNx = nx;
-              bestNy = ny;
+              found = true;
+            }
+          }
+          // Check if neighbor is exactly on the boundary
+          // If the neighbor IS the boundary, 'current' is exactly 1.0 grid unit
+          // away (or exactly gridDelta_ in physical units). We must include
+          // 'current' so the mesh has thickness.
+          else if (std::abs(valNei) < thresholdEps) {
+            double dist = 1.0; // We are 1 grid cell away
+            if (dist < minDist) {
+              minDist = dist;
               found = true;
             }
           }
         }
-        if ((minDist < 1.0) && found) {
-          double sdfCurrent = minDist; // * gridDelta_;
+        if ((minDist <= 1.0) && found) {
+          double sdfCurrent = minDist;
           IndexType pos;
           pos[0] = x;
           pos[1] = y;
@@ -239,7 +243,8 @@ public:
       data->at(ii) = p.second;
       ii++;
     }
-    viennals::VTKWriter<NumericType>(mesh, "blurredLSGrid.vtp").apply();
+    if (lsInternal::Logger::getLogLevel() >= 5)
+      viennals::VTKWriter<NumericType>(mesh, "blurredLSGrid.vtp").apply();
 
     return pointData;
   }

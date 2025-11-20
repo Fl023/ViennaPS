@@ -1,7 +1,7 @@
 #include <geometries/psMakeHole.hpp>
 #include <models/psSF6O2Etching.hpp>
 
-#include <psProcess.hpp>
+#include <process/psProcess.hpp>
 #include <psUtil.hpp>
 
 using namespace viennaps;
@@ -10,7 +10,6 @@ int main(int argc, char *argv[]) {
   using NumericType = double;
   constexpr int D = 3;
 
-  Logger::setLogLevel(LogLevel::INTERMEDIATE);
   omp_set_num_threads(16);
 
   // Parse the parameters
@@ -30,9 +29,10 @@ int main(int argc, char *argv[]) {
   auto geometry = Domain<NumericType, D>::New(
       params.get("gridDelta"), params.get("xExtent"), params.get("yExtent"));
   MakeHole<NumericType, D>(geometry, params.get("holeRadius"),
-                           0.0 /* holeDepth */, 0.0 /* holeTaperAngle */,
+                           0.0, // holeDepth
+                           0.0, // holeTaperAngle
                            params.get("maskHeight"), params.get("taperAngle"),
-                           HoleShape::Half)
+                           HoleShape::QUARTER)
       .apply();
 
   // use pre-defined model SF6O2 etching model
@@ -48,15 +48,22 @@ int main(int argc, char *argv[]) {
   modelParams.etchStopDepth = params.get("etchStopDepth");
   auto model = SmartPointer<SF6O2Etching<NumericType, D>>::New(modelParams);
 
+  CoverageParameters coverageParams;
+  coverageParams.tolerance = 1e-4;
+
+  RayTracingParameters rayTracingParams;
+  rayTracingParams.raysPerPoint = params.get<unsigned>("raysPerPoint");
+
+  AdvectionParameters advectionParams;
+  advectionParams.integrationScheme = util::convertIntegrationScheme(
+      params.get<std::string>("integrationScheme"));
+
   // process setup
-  Process<NumericType, D> process;
-  process.setDomain(geometry);
-  process.setProcessModel(model);
-  process.setCoverageDeltaThreshold(1e-4);
-  process.setNumberOfRaysPerPoint(params.get<unsigned>("raysPerPoint"));
+  Process<NumericType, D> process(geometry, model);
   process.setProcessDuration(params.get("processTime"));
-  process.setIntegrationScheme(util::convertIntegrationScheme(
-      params.get<std::string>("integrationScheme")));
+  process.setParameters(coverageParams);
+  process.setParameters(rayTracingParams);
+  process.setParameters(advectionParams);
 
   // print initial surface
   geometry->saveSurfaceMesh("initial.vtp");
@@ -65,5 +72,6 @@ int main(int argc, char *argv[]) {
   process.apply();
 
   // print final surface
-  geometry->saveSurfaceMesh(params.get<std::string>("outputFile"));
+  geometry->saveSurfaceMesh(params.get<std::string>("outputFile"), true, 0.01,
+                            true);
 }

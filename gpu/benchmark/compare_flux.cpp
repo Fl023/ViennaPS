@@ -1,14 +1,14 @@
 #include <lsToDiskMesh.hpp>
 
 #include <models/psSingleParticleProcess.hpp>
-#include <psProcess.hpp>
+#include <process/psProcess.hpp>
 
-#include <psgCreateSurfaceMesh.hpp>
-#include <psgElementToPointData.hpp>
-#include <raygTrace.hpp>
+#include <psCreateSurfaceMesh.hpp>
+#include <psElementToPointData.hpp>
+#include <raygTraceTriangle.hpp>
 #include <vcContext.hpp>
 
-#include "BenchmarkGeometry.hpp"
+#include "Benchmark.hpp"
 
 using namespace viennaps;
 
@@ -47,8 +47,7 @@ int main() {
 
   const NumericType sticking = 0.1f;
 
-  Context context;
-  context.create();
+  auto context = DeviceContext::createContext();
 
   auto domain = MAKE_GEO<NumericType>();
 
@@ -60,10 +59,10 @@ int main() {
 
   auto elementKdTree = SmartPointer<KDTree<float, Vec3Df>>::New();
   auto surfMesh = viennals::Mesh<float>::New();
-  gpu::CreateSurfaceMesh<NumericType, float, D> surfMesher(
-      domain->getSurface(), surfMesh, elementKdTree);
+  CreateSurfaceMesh<NumericType, float, D> surfMesher(domain->getSurface(),
+                                                      surfMesh, elementKdTree);
 
-  viennaray::gpu::Trace<NumericType, D> tracer(context);
+  viennaray::gpu::TraceTriangle<NumericType, D> tracer(context);
   tracer.setNumberOfRaysPerPoint(3000);
   tracer.setUseRandomSeeds(false);
 
@@ -72,7 +71,7 @@ int main() {
   auto mesh = gpu::CreateTriangleMesh(GRID_DELTA, surfMesh);
 
   tracer.setGeometry(mesh);
-  tracer.setPipeline("SingleParticlePipeline", context.modulePath);
+  tracer.setPipeline("SingleParticlePipeline", context->modulePath);
 
   auto particle = viennaray::gpu::Particle<NumericType>();
   particle.sticking = sticking;

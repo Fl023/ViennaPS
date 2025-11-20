@@ -1,7 +1,7 @@
 #include <geometries/psMakeTrench.hpp>
 #include <models/psGeometricDistributionModels.hpp>
 
-#include <psProcess.hpp>
+#include <process/psProcess.hpp>
 #include <psUtil.hpp>
 
 namespace ps = viennaps;
@@ -30,7 +30,7 @@ int main(int argc, char *argv[]) {
   geometry->duplicateTopLevelSet(ps::Material::SiO2);
 
   auto model = ps::SmartPointer<ps::SphereDistribution<NumericType, D>>::New(
-      params.get("layerThickness"), params.get("gridDelta"));
+      params.get("layerThickness"));
 
   ps::Process<NumericType, D> process;
   process.setDomain(geometry);

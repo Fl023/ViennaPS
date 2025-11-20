@@ -4,12 +4,13 @@
 #include <rayReflection.hpp>
 #include <rayUtil.hpp>
 
+#include "../process/psProcessModel.hpp"
+#include "../process/psSurfaceModel.hpp"
+#include "../process/psVelocityField.hpp"
 #include "../psConstants.hpp"
-#include "../psProcessModel.hpp"
-#include "../psSurfaceModel.hpp"
 #include "../psUnits.hpp"
-#include "../psVelocityField.hpp"
 
+#include "psIonModelUtil.hpp"
 #include "psPlasmaEtchingParameters.hpp"
 
 namespace viennaps::impl {
@@ -82,12 +83,19 @@ public:
       spRate->resize(numPoints);
       chRate->resize(numPoints);
     }
+
     bool stop = false;
 
+    // The etch rate is calculated in nm/s
+    const double unitConversion =
+        units::Time::getInstance().convertSecond() /
+        units::Length::getInstance().convertNanometer();
+
+#pragma omp parallel for reduction(|| : stop)
     for (size_t i = 0; i < numPoints; ++i) {
-      if (coordinates[i][D - 1] < params.etchStopDepth) {
+      if (coordinates[i][D - 1] < params.etchStopDepth || stop) {
         stop = true;
-        break;
+        continue;
       }
 
       const auto sputterRate = ionSputterFlux[i] * params.ionFlux;
@@ -96,13 +104,15 @@ public:
       const auto chemicalRate =
           params.Substrate.k_sigma * eCoverage->at(i) / 4.;
 
-      // The etch rate is calculated in nm/s
-      const double unitConversion =
-          units::Time::getInstance().convertSecond() /
-          units::Length::getInstance().convertNanometer();
-
-      if (MaterialMap::isMaterial(materialIds[i], Material::Mask)) {
+      if (MaterialMap::isHardmask(materialIds[i])) {
         etchRate[i] = -(1 / params.Mask.rho) * sputterRate * unitConversion;
+        if (Logger::getLogLevel() > 3) {
+          spRate->at(i) = sputterRate;
+          ieRate->at(i) = 0.;
+          chRate->at(i) = 0.;
+        }
+      } else if (MaterialMap::isMaterial(materialIds[i], Material::Polymer)) {
+        etchRate[i] = -(1 / params.Polymer.rho) * sputterRate * unitConversion;
         if (Logger::getLogLevel() > 3) {
           spRate->at(i) = sputterRate;
           ieRate->at(i) = 0.;
@@ -165,17 +175,30 @@ public:
     auto pCoverage = coverages->getScalarData("pCoverage");
     pCoverage->resize(numPoints);
 
+#pragma omp parallel for
     for (size_t i = 0; i < numPoints; ++i) {
       auto Gb_E = etchantFlux->at(i) * params.etchantFlux;
       auto Gb_P = passivationFlux->at(i) * params.passivationFlux;
       auto GY_ie = ionEnhancedFlux->at(i) * params.ionFlux;
       auto GY_p = ionEnhancedPassivationFlux->at(i) * params.ionFlux;
 
-      auto a = (params.Substrate.k_sigma + 2 * GY_ie) / Gb_E;
-      auto b = (params.Substrate.beta_sigma + GY_p) / Gb_P;
-
-      eCoverage->at(i) = Gb_E < 1e-6 ? 0. : 1 / (1 + (a * (1 + 1 / b)));
-      pCoverage->at(i) = Gb_P < 1e-6 ? 0. : 1 / (1 + (b * (1 + 1 / a)));
+      if (Gb_P < 1e-6) {
+        // No passivation case - avoid division by zero
+        eCoverage->at(i) =
+            Gb_E < 1e-6 ? 0.
+                        : Gb_E / (Gb_E + params.Substrate.k_sigma + 2 * GY_ie);
+        pCoverage->at(i) = 0.;
+      } else if (Gb_E < 1e-6) {
+        // No etchant case - avoid division by zero
+        eCoverage->at(i) = 0.;
+        pCoverage->at(i) = Gb_P / (Gb_P + params.Substrate.beta_sigma + GY_p);
+      } else {
+        // Normal case with both fluxes present
+        auto a = (params.Substrate.k_sigma + 2 * GY_ie) / Gb_E;
+        auto b = (params.Substrate.beta_sigma + GY_p) / Gb_P;
+        eCoverage->at(i) = 1 / (1 + (a * (1 + 1 / b)));
+        pCoverage->at(i) = 1 / (1 + (b * (1 + 1 / a)));
+      }
     }
   }
 };
@@ -199,8 +222,7 @@ public:
                         const viennaray::TracingData<NumericType> *globalData,
                         RNG &) override final {
     // collect data for this hit
-    auto cosTheta = std::clamp(-DotProduct(rayDir, geomNormal), NumericType(0),
-                               NumericType(1));
+    auto cosTheta = getCosTheta(rayDir, geomNormal);
     NumericType angle = std::acos(cosTheta);
 
     assert(cosTheta >= 0 && "Hit backside of disc");
@@ -210,10 +232,14 @@ public:
     NumericType A_sp = params.Substrate.A_sp;
     NumericType B_sp = params.Substrate.B_sp;
     NumericType Eth_sp = params.Substrate.Eth_sp;
-    if (MaterialMap::isMaterial(materialId, Material::Mask)) {
+    if (MaterialMap::isHardmask(materialId)) {
       A_sp = params.Mask.A_sp;
       B_sp = params.Mask.B_sp;
       Eth_sp = params.Mask.Eth_sp;
+    } else if (MaterialMap::isMaterial(materialId, Material::Polymer)) {
+      A_sp = params.Polymer.A_sp;
+      B_sp = params.Polymer.B_sp;
+      Eth_sp = params.Polymer.Eth_sp;
     }
 
     // NumericType f_sp_theta = 1.;
@@ -257,36 +283,23 @@ public:
                     const unsigned int primId, const int materialId,
                     const viennaray::TracingData<NumericType> *globalData,
                     RNG &Rng) override final {
-    auto cosTheta = std::clamp(-DotProduct(rayDir, geomNormal), NumericType(0),
-                               NumericType(1));
+    auto cosTheta = util::saturate(-DotProduct(rayDir, geomNormal));
     NumericType incAngle = std::acos(cosTheta);
-
-    // Small incident angles are reflected with the energy fraction centered at
-    // 0
-    NumericType Eref_peak;
-    if (incAngle >= params.Ions.inflectAngle) {
-      Eref_peak = (1 - (1 - A_energy) * (M_PI_2 - incAngle) /
-                           (M_PI_2 - params.Ions.inflectAngle));
-    } else {
-      Eref_peak = A_energy * std::pow(incAngle / params.Ions.inflectAngle,
-                                      params.Ions.n_l);
-    }
-    // Gaussian distribution around the Eref_peak scaled by the particle energy
-    NumericType newEnergy;
-    std::normal_distribution<NumericType> normalDist(E * Eref_peak, 0.1 * E);
-    do {
-      newEnergy = normalDist(Rng);
-    } while (newEnergy > E || newEnergy < 0.);
 
     NumericType sticking = 1.;
     if (incAngle > params.Ions.thetaRMin) {
       sticking =
-          1. - std::clamp((incAngle - params.Ions.thetaRMin) /
-                              (params.Ions.thetaRMax - params.Ions.thetaRMin),
-                          NumericType(0.), NumericType(1.));
+          1. - util::saturate((incAngle - params.Ions.thetaRMin) /
+                              (params.Ions.thetaRMax - params.Ions.thetaRMin));
     }
 
-    // Set the flag to stop tracing if the energy is below the threshold
+    if (sticking >= 1.) {
+      return VIENNARAY_PARTICLE_STOP;
+    }
+
+    NumericType newEnergy = updateEnergy(
+        Rng, E, incAngle, A_energy, params.Ions.inflectAngle, params.Ions.n_l);
+
     NumericType minEnergy =
         std::min(params.Substrate.Eth_ie, params.Substrate.Eth_sp);
     if (newEnergy > minEnergy) {
@@ -296,16 +309,12 @@ public:
           M_PI_2 - std::min(incAngle, params.Ions.minAngle));
       return std::pair<NumericType, Vec3D<NumericType>>{sticking, direction};
     } else {
-      return std::pair<NumericType, Vec3D<NumericType>>{
-          1., Vec3D<NumericType>{0., 0., 0.}};
+      return VIENNARAY_PARTICLE_STOP;
     }
   }
   void initNew(RNG &rngState) override final {
-    std::normal_distribution<NumericType> normalDist{params.Ions.meanEnergy,
-                                                     params.Ions.sigmaEnergy};
-    do {
-      E = normalDist(rngState);
-    } while (E <= 0.);
+    E = initNormalDistEnergy(rngState, params.Ions.meanEnergy,
+                             params.Ions.sigmaEnergy);
   }
   NumericType getSourceDistributionPower() const override final {
     return params.Ions.exponent;

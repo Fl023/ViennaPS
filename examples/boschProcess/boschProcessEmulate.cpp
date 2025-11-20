@@ -2,7 +2,7 @@
 #include <models/psDirectionalProcess.hpp>
 #include <models/psGeometricDistributionModels.hpp>
 #include <models/psIsotropicProcess.hpp>
-#include <psProcess.hpp>
+#include <process/psProcess.hpp>
 #include <psUtil.hpp>
 
 using namespace viennaps;
@@ -49,7 +49,7 @@ void deposit(SmartPointer<Domain<NumericType, D>> &domain,
   std::cout << "  - Deposition - " << std::endl;
   domain->duplicateTopLevelSet(Material::Polymer);
   auto model = SmartPointer<SphereDistribution<NumericType, D>>::New(
-      depositionThickness, domain->getGridDelta());
+      depositionThickness);
   Process<NumericType, D>(domain, model).apply();
 }
 
@@ -80,10 +80,11 @@ int main(int argc, char **argv) {
   }
 
   // geometry setup
-  auto geometry = SmartPointer<Domain<NumericType, D>>::New(
+  auto geometry = Domain<NumericType, D>::New(
       params.get("gridDelta"), params.get("xExtent"), params.get("yExtent"));
   MakeTrench<NumericType, D>(geometry, params.get("trenchWidth"),
-                             0.0 /* trenchDepth */, 0.0 /* trenchTaperAngle */,
+                             0.0, // trenchDepth
+                             0.0, // trenchTaperAngle
                              params.get("maskHeight"))
       .apply();
 

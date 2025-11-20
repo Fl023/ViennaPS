@@ -1,3 +1,0 @@
-from .viennaps3d import *
-
-def ReadConfigFile(fileName: str): ...

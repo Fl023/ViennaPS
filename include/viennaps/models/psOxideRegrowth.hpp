@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../psAdvectionCallback.hpp"
-#include "../psProcessModel.hpp"
+#include "../process/psAdvectionCallback.hpp"
+#include "../process/psProcessModel.hpp"
 #include "../psToDiskMesh.hpp"
 
 #include <csDenseCellSet.hpp>
@@ -32,8 +32,6 @@ public:
       return 0.;
     }
   }
-
-  int getTranslationFieldOptions() const override { return 0; }
 
 private:
   const NumericType rate;
@@ -179,10 +177,13 @@ public:
     return true;
   }
 
-  bool applyPostAdvect(const T advectedTime) override {
+  bool applyPostAdvect(const T processTime) override {
     auto &cellSet = domain->getCellSet();
     cellSet->updateMaterials();
     const auto gridDelta = cellSet->getGridDelta();
+
+    const T advectedTime = processTime - prevTime;
+    prevTime = processTime;
 
     // add byproducts
     for (size_t j = 0; j < nodes.size(); j++) {
@@ -296,25 +297,24 @@ private:
       sum->at(e) += data->at(e) * timeStep;
     }
   }
+
+  double prevTime = 0.;
 };
 } // namespace impl
 
 // The selective etching model works in accordance with the geometry generated
 // by psMakeStack
 template <class NumericType, int D>
-class OxideRegrowth : public ProcessModel<NumericType, D> {
+class OxideRegrowth : public ProcessModelCPU<NumericType, D> {
 public:
-  OxideRegrowth(const NumericType nitrideEtchRate,
-                const NumericType oxideEtchRate,
-                const NumericType redepositionRate,
-                const NumericType reDepositionThreshold,
-                const NumericType redepositionTimeInt,
-                const NumericType diffusionCoefficient,
-                const NumericType sinkStrength,
-                const NumericType scallopVelocity,
-                const NumericType centerVelocity, const NumericType topHeight,
-                const NumericType centerWidth, // 11 parameters
-                const NumericType timeStabilityFactor = 0.245) {
+  OxideRegrowth(NumericType nitrideEtchRate, NumericType oxideEtchRate,
+                NumericType redepositionRate, NumericType reDepositionThreshold,
+                NumericType redepositionTimeInt,
+                NumericType diffusionCoefficient, NumericType sinkStrength,
+                NumericType scallopVelocity, NumericType centerVelocity,
+                NumericType topHeight,
+                NumericType centerWidth, // 11 parameters
+                NumericType timeStabilityFactor = 0.245) {
 
     auto velocityField =
         SmartPointer<impl::SelectiveEtchingVelocityField<NumericType, D>>::New(
@@ -331,7 +331,22 @@ public:
     this->setSurfaceModel(surfModel);
     this->setAdvectionCallback(dynamics);
     this->setProcessName("OxideRegrowth");
+
+    this->processMetaData["Nitride Etch Rate"] = {nitrideEtchRate};
+    this->processMetaData["Oxide Etch Rate"] = {oxideEtchRate};
+    this->processMetaData["Redeposition Rate"] = {redepositionRate};
+    this->processMetaData["ReDeposition Threshold"] = {reDepositionThreshold};
+    this->processMetaData["ReDeposition Time Interval"] = {redepositionTimeInt};
+    this->processMetaData["Diffusion Coefficient"] = {diffusionCoefficient};
+    this->processMetaData["Sink Strength"] = {sinkStrength};
+    this->processMetaData["Scallop Velocity"] = {scallopVelocity};
+    this->processMetaData["Center Velocity"] = {centerVelocity};
+    this->processMetaData["Top Height"] = {topHeight};
+    this->processMetaData["Center Width"] = {centerWidth};
+    this->processMetaData["Time Stability Factor"] = {timeStabilityFactor};
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(OxideRegrowth)
 
 } // namespace viennaps

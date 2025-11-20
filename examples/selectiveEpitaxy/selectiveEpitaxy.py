@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+import viennaps as ps
 
 # parse config file name and simulation dimension
 parser = ArgumentParser(
@@ -12,77 +13,50 @@ args = parser.parse_args()
 # switch between 2D and 3D mode
 if args.dim == 2:
     print("Running 2D simulation.")
-    import viennaps2d as vps
 else:
     print("Running 3D simulation.")
-    import viennaps3d as vps
+ps.setDimension(args.dim)
 
-params = vps.ReadConfigFile(args.filename)
+params = ps.readConfigFile(args.filename)
 
-geometry = vps.Domain(
+geometry = ps.Domain(
     gridDelta=params["gridDelta"], xExtent=params["xExtent"], yExtent=params["yExtent"]
 )
-vps.MakePlane(
-    domain=geometry, height=0.0, material=vps.Material.Si, addToExisting=False
+ps.MakeFin(
+    domain=geometry,
+    finWidth=params["finWidth"],
+    finHeight=params["finHeight"],
 ).apply()
 
-fin = vps.ls.Domain(geometry.getLevelSets()[-1])
-
-if args.dim == 3:
-    vps.ls.MakeGeometry(
-        fin,
-        vps.ls.Box(
-            [
-                -params["finWidth"] / 2.0,
-                -params["finLength"] / 2.0,
-                -params["gridDelta"],
-            ],
-            [params["finWidth"] / 2.0, params["finLength"] / 2.0, params["finHeight"]],
-        ),
-    ).apply()
-else:
-    vps.ls.MakeGeometry(
-        fin,
-        vps.ls.Box(
-            [
-                -params["finWidth"] / 2.0,
-                -params["gridDelta"],
-            ],
-            [params["finWidth"] / 2.0, params["finHeight"]],
-        ),
-    ).apply()
-
-geometry.applyBooleanOperation(fin, vps.ls.BooleanOperationEnum.UNION)
-
-geometry.saveVolumeMesh("fin")
-
-vps.MakePlane(
+ps.MakePlane(
     domain=geometry,
     height=params["oxideHeight"],
-    material=vps.Material.SiO2,
+    material=ps.Material.SiO2,
     addToExisting=True,
 ).apply()
 
 # copy top layer to capture deposition
-geometry.duplicateTopLevelSet(vps.Material.SiGe)
+geometry.duplicateTopLevelSet(ps.Material.SiGe)
 
-model = vps.AnisotropicProcess(
-    materials=[
-        (vps.Material.Si, params["epitaxyRate"]),
-        (vps.Material.SiGe, params["epitaxyRate"]),
+model = ps.SelectiveEpitaxy(
+    materialRates=[
+        (ps.Material.Si, params["epitaxyRate"]),
+        (ps.Material.SiGe, params["epitaxyRate"]),
     ],
+    rate111=params["R111"],
+    rate100=params["R100"],
 )
 
-process = vps.Process()
-process.setDomain(geometry)
-process.setProcessModel(model)
-process.setProcessDuration(params["processTime"])
-process.setIntegrationScheme(
-    vps.ls.IntegrationSchemeEnum.STENCIL_LOCAL_LAX_FRIEDRICHS_1ST_ORDER
+advectionParams = ps.AdvectionParameters()
+advectionParams.integrationScheme = (
+    ps.IntegrationScheme.STENCIL_LOCAL_LAX_FRIEDRICHS_1ST_ORDER
 )
 
-geometry.saveVolumeMesh("initial")
+process = ps.Process(geometry, model, params["processTime"])
+process.setParameters(advectionParams)
+
+geometry.saveVolumeMesh("initial_fin")
 
 process.apply()
 
-geometry.saveVolumeMesh("final")
+geometry.saveVolumeMesh("final_fin")

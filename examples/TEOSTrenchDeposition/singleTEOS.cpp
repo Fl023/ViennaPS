@@ -1,8 +1,8 @@
 #include <geometries/psMakeTrench.hpp>
 #include <models/psTEOSDeposition.hpp>
 
+#include <process/psProcess.hpp>
 #include <psDomain.hpp>
-#include <psProcess.hpp>
 #include <psUtil.hpp>
 
 namespace ps = viennaps;
@@ -20,12 +20,11 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  auto geometry = ps::SmartPointer<ps::Domain<NumericType, D>>::New(
+  auto geometry = ps::Domain<NumericType, D>::New(
       params.get("gridDelta"), params.get("xExtent"), params.get("yExtent"));
-  ps::MakeTrench<NumericType, D>(geometry,
-                                 params.get("trenchWidth") /*trench width*/,
-                                 params.get("trenchHeight") /*trench height*/,
-                                 params.get("taperAngle") /* tapering angle */)
+  ps::MakeTrench<NumericType, D>(geometry, params.get("trenchWidth"),
+                                 params.get("trenchHeight"),
+                                 params.get("taperAngle"))
       .apply();
 
   // copy top layer to capture deposition
@@ -33,14 +32,16 @@ int main(int argc, char **argv) {
 
   // process model encompasses surface model and particle types
   auto model = ps::SmartPointer<ps::TEOSDeposition<NumericType, D>>::New(
-      params.get("stickingProbabilityP1") /*particle sticking probability*/,
-      params.get("depositionRateP1") /*process deposition rate*/,
-      params.get("reactionOrderP1") /*process reaction order*/);
+      params.get("stickingProbabilityP1"), params.get("depositionRateP1"),
+      params.get("reactionOrderP1"));
+
+  ps::RayTracingParameters rayParams;
+  rayParams.raysPerPoint = params.get<unsigned>("numRaysPerPoint");
 
   ps::Process<NumericType, D> process;
   process.setDomain(geometry);
   process.setProcessModel(model);
-  process.setNumberOfRaysPerPoint(params.get<unsigned>("numRaysPerPoint"));
+  process.setParameters(rayParams);
   process.setProcessDuration(params.get("processTime"));
 
   geometry->saveVolumeMesh("SingleTEOS_initial");

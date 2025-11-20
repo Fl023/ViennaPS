@@ -38,7 +38,7 @@ public:
   MakeStack(psDomainType domain, int numLayers, NumericType layerHeight,
             NumericType substrateHeight, NumericType holeRadius,
             NumericType trenchWidth, NumericType maskHeight,
-            NumericType taperAngle, bool halfStack = false,
+            NumericType taperAngle = 0.0, bool halfStack = false,
             Material maskMaterial = Material::Mask)
       : domain_(domain), geometryFactory_(domain->getSetup(), __func__),
         numLayers_(numLayers), layerHeight_(layerHeight),
@@ -66,6 +66,7 @@ public:
   void apply() {
     domain_->clear();
     domain_->getSetup().check();
+    geometryFactory_.setup(domain_->getSetup());
 
     if (maskHeight_ > 0.) {
       NumericType maskBase = substrateHeight_ + layerHeight_ * numLayers_;
@@ -145,5 +146,7 @@ public:
     return substrateHeight_ + numLayers_ * layerHeight_ + maskHeight_;
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(MakeStack)
 
 } // namespace viennaps

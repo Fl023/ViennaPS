@@ -2,8 +2,8 @@
 #include <models/psMultiParticleProcess.hpp>
 
 #include <lsTestAsserts.hpp>
+#include <process/psProcess.hpp>
 #include <psDomain.hpp>
-#include <psProcess.hpp>
 #include <vcTestAsserts.hpp>
 
 namespace viennacore {
@@ -14,7 +14,7 @@ template <class NumericType, int D> void RunTest() {
   Logger::setLogLevel(LogLevel::WARNING);
 
   {
-    auto domain = SmartPointer<Domain<NumericType, D>>::New();
+    auto domain = Domain<NumericType, D>::New();
     MakeTrench<NumericType, D>(domain, 1., 10., 10., 2.5, 5., 10., 1., false,
                                true, Material::Si)
         .apply();
@@ -22,8 +22,6 @@ template <class NumericType, int D> void RunTest() {
 
     VC_TEST_ASSERT(model->getSurfaceModel());
     VC_TEST_ASSERT(model->getVelocityField());
-    VC_TEST_ASSERT(model->getVelocityField()->getTranslationFieldOptions() ==
-                   2);
 
     model->addNeutralParticle(1.);
     VC_TEST_ASSERT(model->getParticleTypes().size() == 1);
@@ -37,8 +35,12 @@ template <class NumericType, int D> void RunTest() {
           return material == Material::Si ? -(fluxes[0] + fluxes[1]) : 0;
         });
 
+    RayTracingParameters rayParams;
+    rayParams.raysPerPoint = 10;
+
     Process<NumericType, D> process(domain, model, 1.);
-    process.setNumberOfRaysPerPoint(100);
+    process.setParameters(rayParams);
+    process.setFluxEngineType(FluxEngineType::CPU_DISK);
     process.apply();
 
     LSTEST_ASSERT_VALID_LS(domain->getLevelSets().back(), NumericType, D);

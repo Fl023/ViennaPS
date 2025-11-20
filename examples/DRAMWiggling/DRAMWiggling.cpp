@@ -1,11 +1,9 @@
+#include <gds/psGDSReader.hpp>
 #include <geometries/psMakePlane.hpp>
 #include <models/psHBrO2Etching.hpp>
-#include <psProcess.hpp>
-#include <psUtil.hpp>
-
+#include <process/psProcess.hpp>
 #include <psDomain.hpp>
-#include <psGDSReader.hpp>
-#include <psMaterials.hpp>
+#include <psUtil.hpp>
 
 using namespace viennaps;
 
@@ -55,15 +53,22 @@ int main(int argc, char **argv) {
   modelParams.Ions.n_l = 200;
   auto model = SmartPointer<HBrO2Etching<NumericType, D>>::New(modelParams);
 
+  // Advection parameters
+  AdvectionParameters advectionParams;
+  advectionParams.integrationScheme = util::convertIntegrationScheme(
+      params.get<std::string>("integrationScheme"));
+
+  RayTracingParameters rayParams;
+  rayParams.raysPerPoint = params.get<int>("raysPerPoint");
+
+  CoverageParameters coverageParams;
+  coverageParams.maxIterations = 10;
+
   // Process setup
-  Process<NumericType, D> process;
-  process.setDomain(geometry);
-  process.setProcessModel(model);
-  process.setCoverageDeltaThreshold(1e-4);
-  process.setNumberOfRaysPerPoint(static_cast<int>(params.get("raysPerPoint")));
-  process.setProcessDuration(params.get("processTime"));
-  process.setIntegrationScheme(util::convertIntegrationScheme(
-      params.get<std::string>("integrationScheme")));
+  Process<NumericType, D> process(geometry, model, params.get("processTime"));
+  process.setParameters(advectionParams);
+  process.setParameters(rayParams);
+  process.setParameters(coverageParams);
 
   // print initial surface
   geometry->saveSurfaceMesh("DRAM_Initial.vtp");

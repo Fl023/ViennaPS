@@ -1,6 +1,6 @@
 #pragma once
 
-#include <psProcessModel.hpp>
+#include "../process/psProcessModel.hpp"
 
 namespace viennaps {
 
@@ -8,7 +8,7 @@ using namespace viennacore;
 
 namespace impl {
 
-template <typename NumericType, int D>
+template <typename NumericType>
 class SingleParticleALDSurfaceModel : public SurfaceModel<NumericType> {
   using SurfaceModel<NumericType>::coverages;
 
@@ -72,7 +72,7 @@ public:
            ev_ * Coverage->at(i)) *
           dt_ / s0_;
 
-      Coverage->at(i) = std::min(Coverage->at(i), 1.);
+      Coverage->at(i) = std::min(Coverage->at(i), NumericType(1.0));
     }
   }
 };
@@ -95,7 +95,6 @@ public:
                         viennaray::TracingData<NumericType> &localData,
                         const viennaray::TracingData<NumericType> *globalData,
                         RNG &Rng) override final {
-
     localData.getVectorData(0)[primID] += rayWeight;
   }
   std::pair<NumericType, Vec3D<NumericType>>
@@ -110,7 +109,7 @@ public:
     // H2O surface coverage
     const auto &phi = globalData->getVectorData(0)[primID];
     // Obtain the sticking probability
-    NumericType S_eff = beta * (1. - phi);
+    NumericType S_eff = beta * std::max(NumericType(1.) - phi, NumericType(0.));
 
     auto direction =
         viennaray::ReflectionDiffuse<NumericType, D>(geomNormal, Rng);
@@ -124,20 +123,97 @@ public:
 };
 } // namespace impl
 
+#ifdef VIENNACORE_COMPILE_GPU
+namespace gpu {
 template <typename NumericType, int D>
-class SingleParticleALD : public ProcessModel<NumericType, D> {
+class SingleParticleALD : public ProcessModelGPU<NumericType, D> {
 public:
   SingleParticleALD(
-      const NumericType stickingProbability, // particle sticking probability
-      const int numCycles, // number of cycles to simulate in one advection step
-      const NumericType growthPerCycle, // growth per cycle
-      const int totalCycles,            // total number of cycles
-      const NumericType
-          coverageTimeStep,     // time step for solving the coverage equation
-      const NumericType evFlux, // evaporation flux
-      const NumericType inFlux, // incoming flux
-      const NumericType s0,     // saturation coverage
-      const NumericType gasMFP  // mean free path of the particles in the gas
+      NumericType stickingProbability, // particle sticking probability
+      int numCycles, // number of cycles to simulate in one advection step
+      NumericType growthPerCycle, // growth per cycle
+      int totalCycles,            // total number of cycles
+      NumericType
+          coverageTimeStep, // time step for solving the coverage equation
+      NumericType evFlux,   // evaporation flux
+      NumericType inFlux,   // incoming flux
+      NumericType s0,       // saturation coverage
+      NumericType gasMFP    // mean free path of the particles in the gas
+  ) {
+    if (gasMFP > 0) {
+      Logger::getInstance()
+          .addWarning(
+              "Mean free path > 0 specified for GPU SingleParticleALD model. "
+              "Currently only ballistic transport is supported.")
+          .print();
+      gasMFP = -1;
+    }
+
+    // particles
+    viennaray::gpu::Particle<NumericType> particle{
+        .name = "SingleParticle", .sticking = stickingProbability};
+    particle.dataLabels.push_back("ParticleFlux");
+
+    std::unordered_map<std::string, unsigned> pMap = {{"SingleParticle", 0}};
+    std::vector<viennaray::gpu::CallableConfig> cMap = {
+        {0, viennaray::gpu::CallableSlot::COLLISION,
+         "__direct_callable__singleNeutralCollision"},
+        {0, viennaray::gpu::CallableSlot::REFLECTION,
+         "__direct_callable__singleALDNeutralReflection"}};
+    this->setParticleCallableMap(pMap, cMap);
+    this->setCallableFileName("CallableWrapper");
+
+    NumericType gpc = totalCycles / numCycles * growthPerCycle;
+
+    // surface model
+    auto surfModel =
+        SmartPointer<::viennaps::impl::SingleParticleALDSurfaceModel<
+            NumericType>>::New(coverageTimeStep, gpc, evFlux, inFlux,
+                               stickingProbability, s0);
+
+    // velocity field
+    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New();
+
+    this->setSurfaceModel(surfModel);
+    this->setVelocityField(velField);
+    this->insertNextParticleType(particle);
+    this->setProcessName("SingleParticleALD");
+    this->isALP = true;
+    this->hasGPU = true;
+
+    this->processMetaData["stickingProbability"] =
+        std::vector<double>{stickingProbability};
+    this->processMetaData["numCycles"] =
+        std::vector<double>{static_cast<double>(numCycles)};
+    this->processMetaData["growthPerCycle"] =
+        std::vector<double>{growthPerCycle};
+    this->processMetaData["totalCycles"] =
+        std::vector<double>{static_cast<double>(totalCycles)};
+    this->processMetaData["coverageTimeStep"] =
+        std::vector<double>{coverageTimeStep};
+    this->processMetaData["evaporationFlux"] = std::vector<double>{evFlux};
+    this->processMetaData["incomingFlux"] = std::vector<double>{inFlux};
+    this->processMetaData["s0"] = std::vector<double>{s0};
+    this->processMetaData["gasMeanFreePath"] = std::vector<double>{gasMFP};
+  }
+};
+} // namespace gpu
+#endif
+
+template <typename NumericType, int D>
+class SingleParticleALD : public ProcessModelCPU<NumericType, D> {
+public:
+  SingleParticleALD(
+      NumericType stickingProbability, // particle sticking probability
+      int numCycles, // number of cycles to simulate in one advection step
+      NumericType growthPerCycle, // growth per cycle
+      int totalCycles,            // total number of cycles
+      NumericType
+          coverageTimeStep, // time step for solving the coverage equation
+      NumericType evFlux,   // evaporation flux
+      NumericType inFlux,   // incoming flux
+      NumericType s0,       // saturation coverage
+      NumericType gasMFP    // mean free path of the particles in the gas
   ) {
     auto particle =
         std::make_unique<impl::SingleParticleALDParticle<NumericType, D>>(
@@ -147,17 +223,52 @@ public:
 
     // surface model
     auto surfModel =
-        SmartPointer<impl::SingleParticleALDSurfaceModel<NumericType, D>>::New(
+        SmartPointer<impl::SingleParticleALDSurfaceModel<NumericType>>::New(
             coverageTimeStep, gpc, evFlux, inFlux, stickingProbability, s0);
 
     // velocity field
-    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New(2);
+    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New();
 
     this->setSurfaceModel(surfModel);
     this->setVelocityField(velField);
     this->insertNextParticleType(particle);
     this->setProcessName("SingleParticleALD");
+    this->isALP = true;
+    this->hasGPU = true;
+
+    this->processMetaData["stickingProbability"] =
+        std::vector<double>{stickingProbability};
+    this->processMetaData["numCycles"] =
+        std::vector<double>{static_cast<double>(numCycles)};
+    this->processMetaData["growthPerCycle"] =
+        std::vector<double>{growthPerCycle};
+    this->processMetaData["totalCycles"] =
+        std::vector<double>{static_cast<double>(totalCycles)};
+    this->processMetaData["coverageTimeStep"] =
+        std::vector<double>{coverageTimeStep};
+    this->processMetaData["evaporationFlux"] = std::vector<double>{evFlux};
+    this->processMetaData["incomingFlux"] = std::vector<double>{inFlux};
+    this->processMetaData["s0"] = std::vector<double>{s0};
+    this->processMetaData["gasMeanFreePath"] = std::vector<double>{gasMFP};
   }
+
+#ifdef VIENNACORE_COMPILE_GPU
+  SmartPointer<ProcessModelBase<NumericType, D>> getGPUModel() override {
+    auto gpuModel = SmartPointer<gpu::SingleParticleALD<NumericType, D>>::New(
+        this->processMetaData["stickingProbability"][0],
+        static_cast<int>(this->processMetaData["numCycles"][0]),
+        this->processMetaData["growthPerCycle"][0],
+        static_cast<int>(this->processMetaData["totalCycles"][0]),
+        this->processMetaData["coverageTimeStep"][0],
+        this->processMetaData["evaporationFlux"][0],
+        this->processMetaData["incomingFlux"][0],
+        this->processMetaData["s0"][0],
+        this->processMetaData["gasMeanFreePath"][0]);
+    return gpuModel;
+  }
+#endif
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(SingleParticleALD)
 
 } // namespace viennaps

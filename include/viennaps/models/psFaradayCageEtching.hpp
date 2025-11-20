@@ -2,8 +2,12 @@
 
 #include "psIonBeamEtching.hpp"
 
+#include "../process/psProcessModel.hpp"
 #include "../psMaterials.hpp"
-#include "../psProcessModel.hpp"
+
+#ifdef VIENNACORE_COMPILE_GPU
+#include <psgPipelineParameters.hpp>
+#endif
 
 #include <functional>
 #include <random>
@@ -16,6 +20,13 @@ template <typename NumericType> struct FaradayCageParameters {
   IBEParameters<NumericType> ibeParams;
 
   NumericType cageAngle = 0; // degree
+
+  auto toProcessMetaData() const {
+    std::unordered_map<std::string, std::vector<double>> processData =
+        ibeParams.toProcessMetaData();
+    processData["Cage Angle"] = {(cageAngle * M_PI) / 180.};
+    return processData;
+  }
 };
 
 namespace impl {
@@ -177,26 +188,146 @@ private:
 
 } // namespace impl
 
+#ifdef VIENNACORE_COMPILE_GPU
+namespace gpu {
+
 template <typename NumericType, int D>
-class FaradayCageEtching : public ProcessModel<NumericType, D> {
+class FaradayCageEtching final : public ProcessModelGPU<NumericType, D> {
 public:
-  FaradayCageEtching() = default;
+  // Angles in degrees
+  FaradayCageEtching(const FaradayCageParameters<NumericType> &params,
+                     const std::vector<Material> &maskMaterials)
+      : params_(params), maskMaterials_(maskMaterials) {
 
-  FaradayCageEtching(const std::vector<Material> &maskMaterials)
-      : maskMaterials_(maskMaterials) {}
+    NumericType cosTilt = std::cos(params.ibeParams.tiltAngle * M_PIf / 180.f);
+    NumericType sinTilt = std::sin(params.ibeParams.tiltAngle * M_PIf / 180.f);
+    NumericType cage_y = std::cos(params.cageAngle * M_PIf / 180.f);
+    NumericType cage_x = std::sin(params.cageAngle * M_PIf / 180.f);
 
-  FaradayCageEtching(const std::vector<Material> &maskMaterials,
-                     const FaradayCageParameters<NumericType> &params)
-      : maskMaterials_(maskMaterials), params_(params) {}
+    viennaray::gpu::Particle<NumericType> particle1{
+        .name = "Ion1",
+        .cosineExponent = params.ibeParams.exponent,
+        .useCustomDirection = true,
+        .direction =
+            Vec3D<NumericType>{-cage_x * cosTilt, cage_y * cosTilt, -sinTilt}};
+    particle1.dataLabels.push_back(
+        ::viennaps::impl::IBESurfaceModel<NumericType>::fluxLabel);
+    if (params.ibeParams.redepositionRate > 0.) {
+      particle1.dataLabels.push_back(
+          ::viennaps::impl::IBESurfaceModel<NumericType>::redepositionLabel);
+    }
+    this->insertNextParticleType(particle1);
 
-  void setMaskMaterials(const std::vector<Material> &maskMaterials) {
-    maskMaterials_ = maskMaterials;
+    viennaray::gpu::Particle<NumericType> particle2{
+        .name = "Ion2",
+        .cosineExponent = params.ibeParams.exponent,
+        .useCustomDirection = true,
+        .direction =
+            Vec3D<NumericType>{cage_x * cosTilt, -cage_y * cosTilt, -sinTilt}};
+    // NO ADDITIONAL FLUX ARRAY NEEDED, ALL PARTICLES WRITE TO THE SAME
+    this->insertNextParticleType(particle2);
+
+    // Callables
+    std::unordered_map<std::string, unsigned> pMap = {{"Ion1", 0}, {"Ion2", 1}};
+    std::vector<viennaray::gpu::CallableConfig> cMap = {
+        {0, viennaray::gpu::CallableSlot::COLLISION,
+         "__direct_callable__faradayCollision"},
+        {0, viennaray::gpu::CallableSlot::REFLECTION,
+         "__direct_callable__IBEReflection"},
+        {0, viennaray::gpu::CallableSlot::INIT, "__direct_callable__IBEInit"},
+        {1, viennaray::gpu::CallableSlot::COLLISION,
+         "__direct_callable__faradayCollision"},
+        {1, viennaray::gpu::CallableSlot::REFLECTION,
+         "__direct_callable__IBEReflection"},
+        {1, viennaray::gpu::CallableSlot::INIT, "__direct_callable__IBEInit"}};
+    this->setParticleCallableMap(pMap, cMap);
+    this->setCallableFileName("CallableWrapper");
+
+    // Parameters to upload to device
+    impl::IonParams deviceParams;
+    deviceParams.thetaRMin =
+        static_cast<float>(constants::degToRad(params.ibeParams.thetaRMin));
+    deviceParams.thetaRMax =
+        static_cast<float>(constants::degToRad(params.ibeParams.thetaRMax));
+    deviceParams.meanEnergy = static_cast<float>(params.ibeParams.meanEnergy);
+    deviceParams.sigmaEnergy = static_cast<float>(params.ibeParams.sigmaEnergy);
+    deviceParams.thresholdEnergy = static_cast<float>(
+        std::sqrt(params.ibeParams.thresholdEnergy)); // precompute sqrt
+    deviceParams.minAngle =
+        static_cast<float>(constants::degToRad(params.ibeParams.minAngle));
+    deviceParams.inflectAngle =
+        static_cast<float>(constants::degToRad(params.ibeParams.inflectAngle));
+    deviceParams.n_l = static_cast<float>(params.ibeParams.n_l);
+    deviceParams.B_sp = 0.f; // not used in IBE
+    if (params.ibeParams.cos4Yield.isDefined) {
+      deviceParams.a1 = static_cast<float>(params.ibeParams.cos4Yield.a1);
+      deviceParams.a2 = static_cast<float>(params.ibeParams.cos4Yield.a2);
+      deviceParams.a3 = static_cast<float>(params.ibeParams.cos4Yield.a3);
+      deviceParams.a4 = static_cast<float>(params.ibeParams.cos4Yield.a4);
+      deviceParams.aSum = static_cast<float>(params.ibeParams.cos4Yield.aSum());
+    }
+    deviceParams.redepositionRate =
+        static_cast<float>(params.ibeParams.redepositionRate);
+    deviceParams.redepositionThreshold =
+        static_cast<float>(params.ibeParams.redepositionThreshold);
+
+    // upload process params
+    this->processData.alloc(sizeof(impl::IonParams));
+    this->processData.upload(&deviceParams, 1);
+
+    // surface model
+    // adjust rate here since we trace two particles per point
+    auto surfaceModelParams = params_.ibeParams;
+    surfaceModelParams.planeWaferRate *= 0.5;
+    for (auto &pair : surfaceModelParams.materialPlaneWaferRate) {
+      pair.second *= 0.5;
+    }
+    surfaceModelParams.redepositionRate *= 0.5;
+    auto surfModel =
+        SmartPointer<::viennaps::impl::IBESurfaceModel<NumericType>>::New(
+            surfaceModelParams, maskMaterials_);
+
+    // velocity field
+    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New();
+
+    this->setSurfaceModel(surfModel);
+    this->setVelocityField(velField);
+    this->setProcessName("FaradayCageEtching");
+    this->processMetaData = params_.toProcessMetaData();
+    this->hasGPU = true;
   }
 
-  FaradayCageParameters<NumericType> &getParameters() { return params_; }
+private:
+  FaradayCageParameters<NumericType> params_;
+  std::vector<Material> maskMaterials_;
+};
+} // namespace gpu
+#endif
 
-  void setParameters(const FaradayCageParameters<NumericType> &params) {
-    params_ = params;
+template <typename NumericType, int D>
+class FaradayCageEtching : public ProcessModelCPU<NumericType, D> {
+public:
+  FaradayCageEtching(const FaradayCageParameters<NumericType> &params,
+                     const std::vector<Material> &maskMaterials)
+      : maskMaterials_(maskMaterials), params_(params) {
+    // particles
+    auto particle =
+        std::make_unique<impl::IBEIonWithRedeposition<NumericType, D>>(
+            params_.ibeParams);
+
+    // surface model
+    auto surfModel = SmartPointer<impl::IBESurfaceModel<NumericType>>::New(
+        params_.ibeParams, maskMaterials_);
+
+    // velocity field
+    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New();
+
+    this->setSurfaceModel(surfModel);
+    this->setVelocityField(velField);
+    this->insertNextParticleType(particle);
+    this->setProcessName("FaradayCageEtching");
+    this->processMetaData = params_.toProcessMetaData();
+    this->hasGPU = true;
   }
 
   void initialize(SmartPointer<Domain<NumericType, D>> domain,
@@ -208,6 +339,9 @@ public:
         boundingBox, gridDelta, params_.ibeParams.tiltAngle, params_.cageAngle,
         params_.ibeParams.exponent);
     this->setSource(source);
+
+    if (Logger::getLogLevel() >= 5)
+      source->saveSourcePlane();
 
     if (firstInit)
       return;
@@ -225,36 +359,27 @@ public:
           .print();
     }
 
-    // particles
-    auto particle =
-        std::make_unique<impl::IBEIonWithRedeposition<NumericType, D>>(
-            params_.ibeParams);
-
-    // surface model
-    auto surfModel = SmartPointer<impl::IBESurfaceModel<NumericType>>::New(
-        params_.ibeParams, maskMaterials_);
-
-    // velocity field
-    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New(2);
-
-    if (Logger::getLogLevel() >= 5)
-      source->saveSourcePlane();
-
-    this->particles.clear();
-    this->setSurfaceModel(surfModel);
-    this->setVelocityField(velField);
-    this->insertNextParticleType(particle);
-    this->setProcessName("FaradayCageEtching");
-
     firstInit = true;
   }
 
-  void reset() override final { firstInit = false; }
+  void finalize(SmartPointer<Domain<NumericType, D>> domain,
+                const NumericType processedDuration) final {
+    firstInit = false;
+  }
+
+#ifdef VIENNACORE_COMPILE_GPU
+  SmartPointer<ProcessModelBase<NumericType, D>> getGPUModel() final {
+    return SmartPointer<gpu::FaradayCageEtching<NumericType, D>>::New(
+        params_, maskMaterials_);
+  }
+#endif
 
 private:
   bool firstInit = false;
   std::vector<Material> maskMaterials_;
   FaradayCageParameters<NumericType> params_;
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(FaradayCageEtching)
 
 } // namespace viennaps

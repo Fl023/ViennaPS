@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../psProcessModel.hpp"
+#include "../process/psProcessModel.hpp"
 
 #include <rayParticle.hpp>
 #include <rayReflection.hpp>
@@ -17,10 +17,8 @@ class PECVDSurfaceModel : public SurfaceModel<NumericType> {
   const NumericType ionReactionOrder_;
 
 public:
-  PECVDSurfaceModel(const NumericType radicalRate,
-                    const NumericType radicalReactionOrder,
-                    const NumericType ionRate,
-                    const NumericType ionReactionOrder)
+  PECVDSurfaceModel(NumericType radicalRate, NumericType radicalReactionOrder,
+                    NumericType ionRate, NumericType ionReactionOrder)
       : radicalRate_(radicalRate), radicalReactionOrder_(radicalReactionOrder),
         ionRate_(ionRate), ionReactionOrder_(ionReactionOrder) {}
 
@@ -34,7 +32,8 @@ public:
 
     std::vector<NumericType> velocity(particleFluxRadical->size(), 0.);
 
-    for (std::size_t i = 0; i < velocity.size(); i++) {
+#pragma omp parallel for
+    for (size_t i = 0; i < velocity.size(); i++) {
       // calculate surface velocity based on particle fluxes
       velocity[i] =
           radicalRate_ *
@@ -60,12 +59,15 @@ public:
                     const unsigned int primId, const int materialId,
                     const viennaray::TracingData<NumericType> *globalData,
                     RNG &Rng) final {
-    auto cosTheta = std::clamp(-DotProduct(rayDir, geomNormal), NumericType(0),
-                               NumericType(1));
+    auto cosTheta = getCosTheta(rayDir, geomNormal);
     NumericType incAngle = std::acos(cosTheta);
+
+    if (stickingProbability_ >= 1.0)
+      return VIENNARAY_PARTICLE_STOP;
 
     auto direction = viennaray::ReflectionConedCosine<NumericType, D>(
         rayDir, geomNormal, Rng, std::max(incAngle, minAngle_));
+
     return std::pair<NumericType, Vec3D<NumericType>>{stickingProbability_,
                                                       direction};
   }
@@ -92,16 +94,14 @@ private:
 } // namespace impl
 
 template <class NumericType, int D>
-class TEOSPECVD : public ProcessModel<NumericType, D> {
+class TEOSPECVD : public ProcessModelCPU<NumericType, D> {
 public:
-  TEOSPECVD(const NumericType radicalSticking, const NumericType radicalRate,
-            const NumericType ionRate, const NumericType ionExponent,
-            const NumericType ionSticking = 1.,
-            const NumericType radicalOrder = 1.,
-            const NumericType ionOrder = 1.,
-            const NumericType ionMinAngle = 0.) {
+  TEOSPECVD(NumericType radicalSticking, NumericType radicalRate,
+            NumericType ionRate, NumericType ionExponent,
+            NumericType ionSticking = 1., NumericType radicalOrder = 1.,
+            NumericType ionOrder = 1., NumericType ionMinAngle = 0.) {
     // velocity field
-    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New(2);
+    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New();
     this->setVelocityField(velField);
 
     // particles
@@ -118,7 +118,18 @@ public:
     this->insertNextParticleType(radical);
     this->insertNextParticleType(ion);
     this->setProcessName("TEOSPECVD");
+
+    this->processMetaData["RadicalSticking"] = {radicalSticking};
+    this->processMetaData["RadicalRate"] = {radicalRate};
+    this->processMetaData["RadicalOrder"] = {radicalOrder};
+    this->processMetaData["IonRate"] = {ionRate};
+    this->processMetaData["IonSticking"] = {ionSticking};
+    this->processMetaData["IonExponent"] = {ionExponent};
+    this->processMetaData["IonOrder"] = {ionOrder};
+    this->processMetaData["IonMinAngle"] = {ionMinAngle};
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(TEOSPECVD)
 
 } // namespace viennaps

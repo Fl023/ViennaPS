@@ -1,6 +1,8 @@
 #pragma once
 
+#include "psPreCompileMacros.hpp"
 #include "psUtil.hpp"
+
 #include <hrleGrid.hpp>
 #include <vcLogger.hpp>
 
@@ -9,8 +11,8 @@ namespace viennaps {
 using namespace viennacore;
 using BoundaryType = viennahrle::BoundaryType;
 
-template <class NumericType, int D> class DomainSetup {
-  NumericType gridDelta_;
+template <int D> class DomainSetup {
+  double gridDelta_;
   double bounds_[2 * D] = {0.};
   BoundaryType boundaryCons_[D] = {};
   viennahrle::Grid<D> grid_;
@@ -24,12 +26,23 @@ public:
     }
   }
 
-  DomainSetup(NumericType gridDelta, NumericType xExtent, NumericType yExtent,
+  DomainSetup(double bounds[2 * D], BoundaryType boundaryCons[D],
+              double gridDelta)
+      : gridDelta_(gridDelta) {
+    for (int i = 0; i < D; i++) {
+      bounds_[2 * i] = bounds[2 * i];
+      bounds_[2 * i + 1] = bounds[2 * i + 1];
+      boundaryCons_[i] = boundaryCons[i];
+    }
+    init();
+  }
+
+  DomainSetup(double gridDelta, double xExtent, double yExtent,
               BoundaryType boundary = BoundaryType::REFLECTIVE_BOUNDARY)
       : gridDelta_(gridDelta) {
     if (xExtent <= 0.0) {
       Logger::getInstance()
-          .addWarning("Invalid 'x' extent for domain setup.")
+          .addError("Invalid 'x' extent for domain setup.")
           .print();
     }
 
@@ -39,7 +52,7 @@ public:
     if constexpr (D == 3) {
       if (yExtent <= 0.0) {
         Logger::getInstance()
-            .addWarning("Invalid 'y' extent for domain setup.")
+            .addError("Invalid 'y' extent for domain setup.")
             .print();
       }
       bounds_[2] = -yExtent / 2.;
@@ -63,7 +76,7 @@ public:
     return grid_;
   }
 
-  NumericType gridDelta() const {
+  double gridDelta() const {
     check();
     return gridDelta_;
   }
@@ -86,9 +99,9 @@ public:
     return boundaryConsArray;
   }
 
-  NumericType xExtent() const { return bounds_[1] - bounds_[0]; }
+  double xExtent() const { return bounds_[1] - bounds_[0]; }
 
-  NumericType yExtent() const { return bounds_[3] - bounds_[2]; }
+  double yExtent() const { return bounds_[3] - bounds_[2]; }
 
   bool hasPeriodicBoundary() const {
     return boundaryCons_[0] == BoundaryType::PERIODIC_BOUNDARY ||

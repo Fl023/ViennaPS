@@ -1,5 +1,5 @@
 #include <geometries/psMakeStack.hpp>
-#include <psProcess.hpp>
+#include <process/psProcess.hpp>
 
 #include <models/psOxideRegrowth.hpp>
 
@@ -34,10 +34,13 @@ int main(int argc, char **argv) {
 
   auto domain = ps::SmartPointer<ps::Domain<NumericType, D>>::New(
       params.get("gridDelta"), params.get("xExtent"), params.get("yExtent"));
-  ps::MakeStack<NumericType, D>(
-      domain, params.get<int>("numLayers"), params.get("layerHeight"),
-      params.get("substrateHeight"), 0. /*holeRadius*/,
-      params.get("trenchWidth"), 0. /*maskHeight*/, 0. /*taperAngle*/)
+  ps::MakeStack<NumericType, D>(domain, params.get<int>("numLayers"),
+                                params.get("layerHeight"),
+                                params.get("substrateHeight"),
+                                0.0, // holeRadius
+                                params.get("trenchWidth"),
+                                0.0 // maskHeight
+                                )
       .apply();
   // copy top layer for deposition
   domain->duplicateTopLevelSet(ps::Material::Polymer);
@@ -71,11 +74,15 @@ int main(int argc, char **argv) {
           params.get("numLayers") * params.get("layerHeight"),
       params.get("trenchWidth"), timeStabilityFactor);
 
+  ps::AdvectionParameters advParams;
+  advParams.ignoreVoids = true;
+
   ps::Process<NumericType, D> process;
   process.setDomain(domain);
   process.setProcessModel(model);
   process.setProcessDuration(params.get("targetEtchDepth") /
                              params.get("nitrideEtchRate") * 60.);
+  process.setParameters(advParams);
   process.apply();
 
   domain->saveVolumeMesh("finalStack");

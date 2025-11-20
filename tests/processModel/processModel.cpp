@@ -1,7 +1,6 @@
-#include <psProcessModel.hpp>
+#include <process/psProcessModel.hpp>
 #include <vcTestAsserts.hpp>
 
-#include <models/psAnisotropicProcess.hpp>
 #include <models/psCF4O2Etching.hpp>
 #include <models/psDirectionalProcess.hpp>
 #include <models/psFluorocarbonEtching.hpp>
@@ -11,6 +10,7 @@
 #include <models/psSF6O2Etching.hpp>
 #include <models/psSingleParticleProcess.hpp>
 #include <models/psTEOSDeposition.hpp>
+#include <models/psWetEtching.hpp>
 
 namespace viennacore {
 
@@ -21,12 +21,13 @@ template <class NumericType, int D> void RunTest() {
   units::Length::getInstance().setUnit("nm");
 
   // default constructors
-  { auto model = SmartPointer<ProcessModel<NumericType, D>>::New(); }
+  { auto model = SmartPointer<ProcessModelCPU<NumericType, D>>::New(); }
 
   // fluorocarbon etching
   {
-    auto model = SmartPointer<FluorocarbonEtching<NumericType, D>>::New(
-        1., 1., 1., 1., 1.);
+    auto params = FluorocarbonParameters<NumericType>();
+    params.addMaterial({Material::Polymer, 2.});
+    auto model = SmartPointer<FluorocarbonEtching<NumericType, D>>::New(params);
     VC_TEST_ASSERT(model->getSurfaceModel());
     VC_TEST_ASSERT(model->getVelocityField());
     VC_TEST_ASSERT(model->getParticleTypes().size() == 3);
@@ -34,13 +35,14 @@ template <class NumericType, int D> void RunTest() {
 
   // geometric models
   {
-    auto model = SmartPointer<SphereDistribution<NumericType, D>>::New(1., 1.);
+    NumericType radius = 1;
+    auto model = SmartPointer<SphereDistribution<NumericType, D>>::New(radius);
     VC_TEST_ASSERT(model->getGeometricModel());
   }
 
   {
-    const std::array<double, 3> axes = {1.};
-    auto model = SmartPointer<BoxDistribution<NumericType, D>>::New(axes, 0.);
+    const std::array<NumericType, 3> axes = {1.};
+    auto model = SmartPointer<BoxDistribution<NumericType, D>>::New(axes);
     VC_TEST_ASSERT(model->getGeometricModel());
   }
 
@@ -96,14 +98,12 @@ template <class NumericType, int D> void RunTest() {
     VC_TEST_ASSERT(model->getParticleTypes().size() == 2);
   }
 
-  // anisotropic model
+  // wet etching model
   {
-    auto model = SmartPointer<AnisotropicProcess<NumericType, D>>::New(
+    auto model = SmartPointer<WetEtching<NumericType, D>>::New(
         std::vector<std::pair<Material, NumericType>>{});
     VC_TEST_ASSERT(model->getSurfaceModel());
     VC_TEST_ASSERT(model->getVelocityField());
-    VC_TEST_ASSERT(model->getVelocityField()->getTranslationFieldOptions() ==
-                   0);
   }
 }
 

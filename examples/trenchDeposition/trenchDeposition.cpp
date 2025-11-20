@@ -1,7 +1,7 @@
 #include <geometries/psMakeTrench.hpp>
 #include <models/psSingleParticleProcess.hpp>
 
-#include <psProcess.hpp>
+#include <process/psProcess.hpp>
 #include <psUtil.hpp>
 
 namespace ps = viennaps;
@@ -19,7 +19,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  auto geometry = ps::SmartPointer<ps::Domain<NumericType, D>>::New(
+  auto geometry = ps::Domain<NumericType, D>::New(
       params.get("gridDelta"), params.get("xExtent"), params.get("yExtent"));
   ps::MakeTrench<NumericType, D>(geometry, params.get("trenchWidth"),
                                  params.get("trenchHeight"),
@@ -30,14 +30,10 @@ int main(int argc, char *argv[]) {
   geometry->duplicateTopLevelSet(ps::Material::SiO2);
 
   auto model = ps::SmartPointer<ps::SingleParticleProcess<NumericType, D>>::New(
-      params.get("rate") /*deposition rate*/,
-      params.get("stickingProbability") /*particle sticking probability*/,
-      params.get("sourcePower") /*particle source power*/);
+      params.get("rate"), params.get("stickingProbability"),
+      params.get("sourcePower"));
 
-  ps::Process<NumericType, D> process;
-  process.setDomain(geometry);
-  process.setProcessModel(model);
-  process.setNumberOfRaysPerPoint(1000);
+  ps::Process<NumericType, D> process(geometry, model);
   process.setProcessDuration(params.get("processTime"));
 
   geometry->saveHullMesh("initial");

@@ -1,7 +1,7 @@
 #include <geometries/psMakeFin.hpp>
 #include <models/psFaradayCageEtching.hpp>
 
-#include <psProcess.hpp>
+#include <process/psProcess.hpp>
 #include <psUtil.hpp>
 
 namespace ps = viennaps;
@@ -27,7 +27,8 @@ int main(int argc, char *argv[]) {
       params.get("gridDelta"), params.get("xExtent"), params.get("yExtent"),
       ps::BoundaryType::PERIODIC_BOUNDARY);
   ps::MakeFin<NumericType, D>(geometry, params.get("finWidth"),
-                              0.0 /*finHeight*/, 0.0 /*finTaperAngle*/,
+                              0.0, // finHeight
+                              0.0, // finTaperAngle
                               params.get("maskHeight"))
       .apply();
 
@@ -35,17 +36,22 @@ int main(int argc, char *argv[]) {
   ps::FaradayCageParameters<NumericType> cageParams;
   cageParams.ibeParams.tiltAngle = params.get("tiltAngle");
   cageParams.cageAngle = params.get("cageAngle");
+
   auto model = ps::SmartPointer<ps::FaradayCageEtching<NumericType, D>>::New(
-      maskMaterials, cageParams);
+      cageParams, maskMaterials);
+
+  ps::AdvectionParameters advectionParams;
+  advectionParams.integrationScheme =
+      ps::IntegrationScheme::LOCAL_LAX_FRIEDRICHS_1ST_ORDER;
+
+  ps::RayTracingParameters rayParams;
+  rayParams.raysPerPoint = params.get<int>("raysPerPoint");
 
   // process setup
-  ps::Process<NumericType, D> process;
-  process.setDomain(geometry);
-  process.setProcessModel(model);
-  process.setNumberOfRaysPerPoint(params.get<unsigned>("raysPerPoint"));
+  ps::Process<NumericType, D> process(geometry, model);
   process.setProcessDuration(params.get("etchTime"));
-  process.setIntegrationScheme(
-      ps::IntegrationScheme::LOCAL_LAX_FRIEDRICHS_1ST_ORDER);
+  process.setParameters(rayParams);
+  process.setParameters(advectionParams);
 
   // print initial surface
   geometry->saveHullMesh("initial.vtp");

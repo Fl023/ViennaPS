@@ -1,9 +1,8 @@
 #include "blazedGratingsGeometry.hpp"
 
 #include <models/psIonBeamEtching.hpp>
+#include <process/psProcess.hpp>
 #include <psConstants.hpp>
-#include <psProcess.hpp>
-#include <psProcessParams.hpp>
 
 using namespace viennaps;
 
@@ -11,8 +10,6 @@ int main(int argc, char **argv) {
   using NumericType = double;
   constexpr int D = 2;
   omp_set_num_threads(16);
-
-  Logger::setLogLevel(LogLevel::INFO);
 
   // Parse the parameters
   viennacore::util::Parameters params;
@@ -29,33 +26,31 @@ int main(int argc, char **argv) {
       params.get("gridDelta"));
   geometry->saveSurfaceMesh("initial");
 
-  AdvectionParameters<NumericType> advParams;
+  AdvectionParameters advParams;
   advParams.integrationScheme =
       viennals::IntegrationSchemeEnum::LAX_FRIEDRICHS_2ND_ORDER;
   advParams.timeStepRatio = 0.25;
 
-  RayTracingParameters<NumericType, D> rayTracingParams;
+  RayTracingParameters rayTracingParams;
   rayTracingParams.raysPerPoint = params.get<unsigned>("raysPerPoint");
   rayTracingParams.smoothingNeighbors = 1;
 
-  auto model = SmartPointer<IonBeamEtching<NumericType, D>>::New();
   const NumericType yieldFac = params.get("yieldFactor");
 
-  auto &ibeParams = model->getParameters();
+  IBEParameters<NumericType> ibeParams;
   ibeParams.materialPlaneWaferRate[Material::SiO2] = 1.0;
   ibeParams.materialPlaneWaferRate[Material::Mask] = 1. / 11.;
   ibeParams.exponent = params.get("exponent");
   ibeParams.meanEnergy = params.get("meanEnergy");
-  ibeParams.yieldFunction = [yieldFac](NumericType theta) {
-    const auto cosTheta = std::cos(theta);
-    return (yieldFac * cosTheta - 1.55 * cosTheta * cosTheta +
-            0.65 * cosTheta * cosTheta * cosTheta) /
-           (yieldFac - 0.9);
-  };
+  ibeParams.cos4Yield.isDefined = true;
+  ibeParams.cos4Yield.a1 = yieldFac;
+  ibeParams.cos4Yield.a2 = -1.55;
+  ibeParams.cos4Yield.a3 = 0.65;
+  auto model = SmartPointer<IonBeamEtching<NumericType, D>>::New(ibeParams);
 
   Process<NumericType, D> process(geometry, model);
-  process.setAdvectionParameters(advParams);
-  process.setRayTracingParameters(rayTracingParams);
+  process.setParameters(advParams);
+  process.setParameters(rayTracingParams);
 
   // ANSGM Etch
   NumericType angle = params.get("phi1");

@@ -1,9 +1,9 @@
 #pragma once
 
+#include "../process/psProcessModel.hpp"
+#include "../process/psSurfaceModel.hpp"
+#include "../process/psVelocityField.hpp"
 #include "../psMaterials.hpp"
-#include "../psProcessModel.hpp"
-#include "../psSurfaceModel.hpp"
-#include "../psVelocityField.hpp"
 
 #include <vcSmartPointer.hpp>
 
@@ -34,19 +34,15 @@ public:
 
     return rate_;
   }
-
-  // the translation field should be disabled when using a surface model
-  // which only depends on an analytic velocity field
-  int getTranslationFieldOptions() const override { return 0; }
 };
 } // namespace impl
 
 /// Isotropic etching with one masking material.
 template <typename NumericType, int D>
-class IsotropicProcess : public ProcessModel<NumericType, D> {
+class IsotropicProcess : public ProcessModelCPU<NumericType, D> {
 public:
-  IsotropicProcess(const NumericType isotropicRate,
-                   const Material maskMaterial = Material::Undefined) {
+  IsotropicProcess(NumericType isotropicRate,
+                   Material maskMaterial = Material::Undefined) {
     std::vector<std::pair<int, NumericType>> materialRates;
     if (maskMaterial != Material::Undefined) {
       materialRates.emplace_back(static_cast<int>(maskMaterial), 0.);
@@ -54,7 +50,7 @@ public:
     setup(isotropicRate, std::move(materialRates));
   }
 
-  IsotropicProcess(const NumericType isotropicRate,
+  IsotropicProcess(NumericType isotropicRate,
                    const std::vector<Material> &maskMaterials) {
     std::vector<std::pair<int, NumericType>> materialRates;
     for (const auto &mat : maskMaterials) {
@@ -64,7 +60,7 @@ public:
   }
 
   IsotropicProcess(std::unordered_map<Material, NumericType> materialRates,
-                   const NumericType defaultRate = 0.) {
+                   NumericType defaultRate = 0.) {
     std::vector<std::pair<int, NumericType>> rates;
     for (const auto &[mat, rate] : materialRates) {
       rates.emplace_back(static_cast<int>(mat), rate);
@@ -86,7 +82,25 @@ private:
     this->setSurfaceModel(surfModel);
     this->setVelocityField(velField);
     this->setProcessName("IsotropicProcess");
+
+    // store process data
+    addMetaData("IsotropicRate", rate);
+    if (!materialRates.empty()) {
+      for (const auto &materialRate : materialRates) {
+        addMetaData("Rate " + MaterialMap::toString(
+                                  static_cast<Material>(materialRate.first)),
+                    materialRate.second);
+      }
+    }
+  }
+
+  using ProcessModelCPU<NumericType, D>::processMetaData;
+
+  inline void addMetaData(const std::string &key, double value) {
+    processMetaData[key] = std::vector<double>{value};
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(IsotropicProcess)
 
 } // namespace viennaps

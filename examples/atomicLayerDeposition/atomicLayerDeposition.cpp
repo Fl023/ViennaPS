@@ -1,6 +1,6 @@
 #include <geometries/psMakeTrench.hpp>
 #include <models/psSingleParticleALD.hpp>
-#include <psAtomicLayerProcess.hpp>
+#include <process/psProcess.hpp>
 #include <psConstants.hpp>
 #include <psDomain.hpp>
 #include <psPlanarize.hpp>
@@ -55,9 +55,6 @@ int main(int argc, char **argv) {
   using NumericType = double;
 
   omp_set_num_threads(16);
-#ifndef NDEBUG
-  omp_set_num_threads(1);
-#endif
 
   ps::util::Parameters params;
   if (argc > 1) {
@@ -66,8 +63,6 @@ int main(int argc, char **argv) {
     std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
     return 1;
   }
-
-  ps::Logger::setLogLevel(ps::LogLevel::DEBUG);
 
   auto domain = ps::SmartPointer<ps::Domain<NumericType, D>>::New();
   makeT(domain, params.get("gridDelta"), params.get("openingDepth"),
@@ -90,12 +85,13 @@ int main(int argc, char **argv) {
       params.get("coverageTimeStep"), params.get("evFlux"),
       params.get("inFlux"), params.get("s0"), gasMFP);
 
-  ps::AtomicLayerProcess<NumericType, D> ALP(domain, model);
-  ALP.setCoverageTimeStep(params.get("coverageTimeStep"));
-  ALP.setPulseTime(params.get("pulseTime"));
-  ALP.setNumCycles(params.get<unsigned>("numCycles"));
-  ALP.setNumberOfRaysPerPoint(params.get<unsigned>("numRaysPerPoint"));
-  ALP.disableRandomSeeds();
+  ps::AtomicLayerProcessParameters alpParams;
+  alpParams.numCycles = params.get<unsigned>("numCycles");
+  alpParams.pulseTime = params.get("pulseTime");
+  alpParams.coverageTimeStep = params.get("coverageTimeStep");
+
+  ps::Process<NumericType, D> ALP(domain, model);
+  ALP.setParameters(alpParams);
   ALP.apply();
 
   MeasureProfile<NumericType, D>(domain, params.get("gapHeight") / 2.)

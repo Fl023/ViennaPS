@@ -1,7 +1,7 @@
 #pragma once
 
+#include "../process/psProcessModel.hpp"
 #include "../psMaterials.hpp"
-#include "../psProcessModel.hpp"
 
 #include <rayParticle.hpp>
 #include <rayReflection.hpp>
@@ -18,8 +18,7 @@ class SingleParticleSurfaceModel : public viennaps::SurfaceModel<NumericType> {
 
 public:
   SingleParticleSurfaceModel(
-      const NumericType rate,
-      const std::unordered_map<Material, NumericType> &mask)
+      NumericType rate, const std::unordered_map<Material, NumericType> &mask)
       : rate_(rate), materialRates_(mask) {}
 
   SmartPointer<std::vector<NumericType>>
@@ -31,7 +30,8 @@ public:
         SmartPointer<std::vector<NumericType>>::New(materialIds.size(), 0.);
     auto flux = rates->getScalarData("particleFlux");
 
-    for (std::size_t i = 0; i < velocity->size(); i++) {
+#pragma omp parallel for
+    for (size_t i = 0; i < velocity->size(); i++) {
       if (auto matRate =
               materialRates_.find(MaterialMap::mapToMaterial(materialIds[i]));
           matRate == materialRates_.end()) {
@@ -84,60 +84,147 @@ private:
 };
 } // namespace impl
 
-// Etching or deposition based on a single particle model with diffuse
-// reflections.
+#ifdef VIENNACORE_COMPILE_GPU
+namespace gpu {
+
 template <typename NumericType, int D>
-class SingleParticleProcess : public ProcessModel<NumericType, D> {
+class SingleParticleProcess final : public ProcessModelGPU<NumericType, D> {
 public:
-  SingleParticleProcess(NumericType rate = 1.,
-                        NumericType stickingProbability = 1.,
-                        NumericType sourceDistributionPower = 1.,
-                        Material maskMaterial = Material::Undefined) {
-    std::unordered_map<Material, NumericType> maskMaterialMap = {
-        {maskMaterial, 0.}};
-    initialize(rate, stickingProbability, sourceDistributionPower,
-               std::move(maskMaterialMap));
-  }
-
-  SingleParticleProcess(NumericType rate, NumericType stickingProbability,
-                        NumericType sourceDistributionPower,
-                        std::vector<Material> maskMaterial) {
-    std::unordered_map<Material, NumericType> maskMaterialMap;
-    for (auto &mat : maskMaterial) {
-      maskMaterialMap[mat] = 0.;
-    }
-    initialize(rate, stickingProbability, sourceDistributionPower,
-               std::move(maskMaterialMap));
-  }
-
   SingleParticleProcess(std::unordered_map<Material, NumericType> materialRates,
-                        NumericType stickingProbability,
-                        NumericType sourceDistributionPower) {
-    initialize(0., stickingProbability, sourceDistributionPower,
-               std::move(materialRates));
-  }
-
-private:
-  void initialize(NumericType rate, NumericType stickingProbability,
-                  NumericType sourceDistributionPower,
-                  std::unordered_map<Material, NumericType> &&maskMaterial) {
+                        NumericType rate, NumericType stickingProbability,
+                        NumericType sourceExponent) {
     // particles
-    auto particle = std::make_unique<impl::SingleParticle<NumericType, D>>(
-        stickingProbability, sourceDistributionPower);
+    viennaray::gpu::Particle<NumericType> particle{
+        .name = "SingleParticle",
+        .sticking = stickingProbability,
+        .cosineExponent = sourceExponent};
+    particle.dataLabels.push_back("particleFlux");
+
+    std::unordered_map<std::string, unsigned> pMap = {{"SingleParticle", 0}};
+    std::vector<viennaray::gpu::CallableConfig> cMap = {
+        {0, viennaray::gpu::CallableSlot::COLLISION,
+         "__direct_callable__singleNeutralCollision"},
+        {0, viennaray::gpu::CallableSlot::REFLECTION,
+         "__direct_callable__singleNeutralReflection"}};
+    this->setParticleCallableMap(pMap, cMap);
+    this->setCallableFileName("CallableWrapper");
 
     // surface model
-    auto surfModel =
-        SmartPointer<impl::SingleParticleSurfaceModel<NumericType, D>>::New(
-            rate, maskMaterial);
+    auto surfModel = SmartPointer<::viennaps::impl::SingleParticleSurfaceModel<
+        NumericType, D>>::New(rate, materialRates);
 
     // velocity field
-    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New(2);
+    auto velField =
+        SmartPointer<::viennaps::DefaultVelocityField<NumericType, D>>::New();
 
     this->setSurfaceModel(surfModel);
     this->setVelocityField(velField);
     this->insertNextParticleType(particle);
     this->setProcessName("SingleParticleProcess");
+    this->hasGPU = true;
+
+    this->processMetaData["Default Rate"] = std::vector<double>{rate};
+    this->processMetaData["Sticking Probability"] =
+        std::vector<double>{stickingProbability};
+    this->processMetaData["Source Exponent"] =
+        std::vector<double>{sourceExponent};
+    if (!materialRates.empty()) {
+      for (const auto &pair : materialRates) {
+        if (pair.first == Material::Undefined)
+          continue;
+        this->processMetaData[MaterialMap::toString(pair.first) + " Rate"] =
+            std::vector<double>{pair.second};
+      }
+    }
   }
 };
+} // namespace gpu
+#endif
+
+// Etching or deposition based on a single particle model with diffuse
+// reflections.
+template <typename NumericType, int D>
+class SingleParticleProcess : public ProcessModelCPU<NumericType, D> {
+  NumericType rate_ = 1.;
+  NumericType stickingProbability_ = 1.;
+  NumericType sourceDistributionPower_ = 1.;
+  std::unordered_map<Material, NumericType> materialRates_;
+
+public:
+  SingleParticleProcess(NumericType rate = 1.,
+                        NumericType stickingProbability = 1.,
+                        NumericType sourceDistributionPower = 1.,
+                        Material maskMaterial = Material::Undefined)
+      : rate_(rate), stickingProbability_(stickingProbability),
+        sourceDistributionPower_(sourceDistributionPower) {
+    materialRates_[maskMaterial] = 0.;
+    initialize();
+  }
+
+  SingleParticleProcess(NumericType rate, NumericType stickingProbability,
+                        NumericType sourceDistributionPower,
+                        std::vector<Material> maskMaterial)
+      : rate_(rate), stickingProbability_(stickingProbability),
+        sourceDistributionPower_(sourceDistributionPower) {
+    for (auto &mat : maskMaterial) {
+      materialRates_[mat] = 0.;
+    }
+    initialize();
+  }
+
+  SingleParticleProcess(std::unordered_map<Material, NumericType> materialRates,
+                        NumericType stickingProbability,
+                        NumericType sourceDistributionPower)
+      : rate_(0.), stickingProbability_(stickingProbability),
+        sourceDistributionPower_(sourceDistributionPower),
+        materialRates_(std::move(materialRates)) {
+    initialize();
+  }
+
+#ifdef VIENNACORE_COMPILE_GPU
+  SmartPointer<ProcessModelBase<NumericType, D>> getGPUModel() final {
+    return SmartPointer<gpu::SingleParticleProcess<NumericType, D>>::New(
+        materialRates_, rate_, stickingProbability_, sourceDistributionPower_);
+  }
+#endif
+
+private:
+  void initialize() {
+    // particles
+    auto particle = std::make_unique<impl::SingleParticle<NumericType, D>>(
+        stickingProbability_, sourceDistributionPower_);
+
+    // surface model
+    auto surfModel =
+        SmartPointer<impl::SingleParticleSurfaceModel<NumericType, D>>::New(
+            rate_, materialRates_);
+
+    // velocity field
+    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New();
+
+    this->setSurfaceModel(surfModel);
+    this->setVelocityField(velField);
+    this->insertNextParticleType(particle);
+    this->setProcessName("SingleParticleProcess");
+    this->hasGPU = true;
+
+    this->processMetaData["Default Rate"] = std::vector<double>{rate_};
+    this->processMetaData["Sticking Probability"] =
+        std::vector<double>{stickingProbability_};
+    this->processMetaData["Source Exponent"] =
+        std::vector<double>{sourceDistributionPower_};
+    if (!materialRates_.empty()) {
+      for (const auto &pair : materialRates_) {
+        if (pair.first == Material::Undefined)
+          continue; // skip undefined material
+
+        this->processMetaData[MaterialMap::toString(pair.first) + " Rate"] =
+            std::vector<double>{pair.second};
+      }
+    }
+  }
+};
+
+PS_PRECOMPILE_PRECISION_DIMENSION(SingleParticleProcess)
 
 } // namespace viennaps

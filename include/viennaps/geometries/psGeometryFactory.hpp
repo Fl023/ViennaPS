@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../psDomain.hpp"
+#include "../psPreCompileMacros.hpp"
 
 #include <lsBooleanOperation.hpp>
 #include <lsFromSurfaceMesh.hpp>
@@ -17,15 +18,17 @@ template <class NumericType, int D> class GeometryFactory {
 protected:
   using lsDomainType = SmartPointer<viennals::Domain<NumericType, D>>;
 
-  const DomainSetup<NumericType, D> &setup_;
+  DomainSetup<D> setup_;
   const std::string name_;
 
 public:
-  GeometryFactory(const DomainSetup<NumericType, D> &domainSetup,
+  GeometryFactory(const DomainSetup<D> &domainSetup,
                   const std::string &name = "GeometryFactory")
       : setup_(domainSetup), name_(name) {}
 
-  lsDomainType makeSubstrate(NumericType base) {
+  void setup(const DomainSetup<D> &domainSetup) { setup_ = domainSetup; }
+
+  lsDomainType makeSubstrate(NumericType base) const {
 
     auto substrate = lsDomainType::New(setup_.grid());
 
@@ -45,7 +48,7 @@ public:
     return substrate;
   }
 
-  lsDomainType makeMask(NumericType base, NumericType height) {
+  lsDomainType makeMask(NumericType base, NumericType height) const {
     assert(setup_.isValid());
 
     auto mask = lsDomainType::New(setup_.grid());
@@ -79,7 +82,7 @@ public:
 
   lsDomainType makeCylinderStencil(std::array<NumericType, D> position,
                                    NumericType radius, NumericType height,
-                                   NumericType angle) {
+                                   NumericType angle = 0.) const {
     assert(setup_.isValid());
 
     auto cutout = lsDomainType::New(setup_.grid());
@@ -103,7 +106,8 @@ public:
 
   lsDomainType makeBoxStencil(std::array<NumericType, D> position,
                               NumericType width, NumericType height,
-                              NumericType angle) {
+                              NumericType angle = 0.,
+                              NumericType length = -1.) const {
     if (angle >= 90 || angle <= -90) {
       Logger::getInstance()
           .addError(name_ +
@@ -114,8 +118,8 @@ public:
     }
 
     auto cutout = lsDomainType::New(setup_.grid());
-    auto gridDelta = setup_.gridDelta();
-    auto yExt = setup_.yExtent() / 2 + gridDelta;
+    const NumericType yExt =
+        length > 0 ? length / 2 : setup_.yExtent() / 2 + setup_.gridDelta();
 
     auto mesh = viennals::Mesh<NumericType>::New();
     const NumericType offSet = height * std::tan(angle * M_PI / 180.);
@@ -143,18 +147,19 @@ public:
       }
     } else { // 3D
       auto const x = position[0];
+      auto const y = position[1];
       auto const base = position[2];
-      mesh->insertNextNode(Vec3D<NumericType>{x - width / 2, yExt, base});
-      mesh->insertNextNode(Vec3D<NumericType>{x + width / 2, yExt, base});
+      mesh->insertNextNode(Vec3D<NumericType>{x - width / 2, y + yExt, base});
+      mesh->insertNextNode(Vec3D<NumericType>{x + width / 2, y + yExt, base});
 
       if (offSet >= width / 2) { // single top node
         NumericType top = base + width * height / (2 * offSet);
-        mesh->insertNextNode(Vec3D<NumericType>{x, yExt, top});
+        mesh->insertNextNode(Vec3D<NumericType>{x, y + yExt, top});
 
         // shifted nodes by y extent
-        mesh->insertNextNode(Vec3D<NumericType>{x - width / 2, -yExt, base});
-        mesh->insertNextNode(Vec3D<NumericType>{x + width / 2, -yExt, base});
-        mesh->insertNextNode(Vec3D<NumericType>{x, -yExt, top});
+        mesh->insertNextNode(Vec3D<NumericType>{x - width / 2, y - yExt, base});
+        mesh->insertNextNode(Vec3D<NumericType>{x + width / 2, y - yExt, base});
+        mesh->insertNextNode(Vec3D<NumericType>{x, y - yExt, top});
 
         // triangles
         mesh->insertNextTriangle({0, 2, 1}); // front
@@ -166,18 +171,18 @@ public:
         mesh->insertNextTriangle({0, 3, 2}); // left
         mesh->insertNextTriangle({3, 5, 2}); // left
       } else {
-        mesh->insertNextNode(
-            Vec3D<NumericType>{x + width / 2 - offSet, yExt, base + height});
-        mesh->insertNextNode(
-            Vec3D<NumericType>{x - width / 2 + offSet, yExt, base + height});
+        mesh->insertNextNode(Vec3D<NumericType>{x + width / 2 - offSet,
+                                                y + yExt, base + height});
+        mesh->insertNextNode(Vec3D<NumericType>{x - width / 2 + offSet,
+                                                y + yExt, base + height});
 
         // shifted nodes by y extent
-        mesh->insertNextNode(Vec3D<NumericType>{x - width / 2, -yExt, base});
-        mesh->insertNextNode(Vec3D<NumericType>{x + width / 2, -yExt, base});
-        mesh->insertNextNode(
-            Vec3D<NumericType>{x + width / 2 - offSet, -yExt, base + height});
-        mesh->insertNextNode(
-            Vec3D<NumericType>{x - width / 2 + offSet, -yExt, base + height});
+        mesh->insertNextNode(Vec3D<NumericType>{x - width / 2, y - yExt, base});
+        mesh->insertNextNode(Vec3D<NumericType>{x + width / 2, y - yExt, base});
+        mesh->insertNextNode(Vec3D<NumericType>{x + width / 2 - offSet,
+                                                y - yExt, base + height});
+        mesh->insertNextNode(Vec3D<NumericType>{x - width / 2 + offSet,
+                                                y - yExt, base + height});
 
         // triangles
         mesh->insertNextTriangle({0, 3, 1}); // front
@@ -198,18 +203,20 @@ public:
 
     if (Logger::getInstance().getLogLevel() >= 5) {
       static int count = 0;
-      saveSurfaceMesh(cutout, "_Trench" + std::to_string(count++));
+      saveSurfaceMesh(cutout, "_Box" + std::to_string(count++));
     }
 
     return cutout;
   }
 
 private:
-  void saveSurfaceMesh(lsDomainType levelSet, const std::string &name) {
+  void saveSurfaceMesh(lsDomainType levelSet, const std::string &name) const {
     auto mesh = viennals::Mesh<NumericType>::New();
     viennals::ToSurfaceMesh<NumericType, D>(levelSet, mesh).apply();
     viennals::VTKWriter<NumericType>(mesh, name_ + name).apply();
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(GeometryFactory)
 
 } // namespace viennaps

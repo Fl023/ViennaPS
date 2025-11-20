@@ -1,16 +1,14 @@
 #include <geometries/psMakeTrench.hpp>
-#include <psProcess.hpp>
-#include <psUtil.hpp>
-
 #include <models/psCSVFileProcess.hpp>
+#include <process/psProcess.hpp>
+#include <process/psVelocityField.hpp>
+#include <psMaterials.hpp>
+#include <psUtil.hpp>
 
 using namespace viennaps;
 
 constexpr int D = 2;
 using NumericType = double;
-
-#include <psMaterials.hpp>
-#include <psVelocityField.hpp>
 
 void runDeposition(SmartPointer<CSVFileProcess<NumericType, D>> &depoModel,
                    SmartPointer<Domain<NumericType, D>> &domain,
@@ -44,17 +42,11 @@ int main(int argc, char **argv) {
   }
 
   // geometry setup
-  auto geometry = SmartPointer<Domain<NumericType, D>>::New();
-
-  MakeTrench<NumericType, D>(geometry, params.get("gridDelta"),
-                             params.get("xExtent"), params.get("yExtent"),
-                             params.get("trenchWidth"),
+  auto geometry = Domain<NumericType, D>::New(
+      params.get("gridDelta"), params.get("xExtent"), params.get("yExtent"));
+  MakeTrench<NumericType, D>(geometry, params.get("trenchWidth"),
                              params.get("trenchDepth"),
-                             params.get("taperingAngle"), 0.0, /* baseHeight */
-                             false,       /* periodicBoundary */
-                             false,       /* makeMask */
-                             Material::Si /* material */
-                             )
+                             params.get("taperingAngle"))
       .apply();
 
   geometry->saveVolumeMesh("Trench");

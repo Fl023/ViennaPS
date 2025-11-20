@@ -2,8 +2,8 @@
 #include <geometries/psMakeTrench.hpp>
 #include <lsTestAsserts.hpp>
 #include <models/psCSVFileProcess.hpp>
+#include <process/psProcess.hpp>
 #include <psDomain.hpp>
-#include <psProcess.hpp>
 #include <vcTestAsserts.hpp>
 
 #include <filesystem>
@@ -61,7 +61,7 @@ template <typename NumericType, int D> void RunTest() {
     for (const std::string &modeStr : {"linear", "idw", "custom"}) {
       std::cout << "[CSVFileProcess] Test: " << modeStr << " | Etch: " << etch
                 << " | Dim: " << D << "\n";
-      auto domain = SmartPointer<Domain<NumericType, D>>::New();
+      auto domain = Domain<NumericType, D>::New();
 
       if constexpr (D == 2)
         MakeTrench<NumericType, D>(domain, 1., 10., 10., 2.5, 5., 10., 0.0,
@@ -69,7 +69,7 @@ template <typename NumericType, int D> void RunTest() {
             .apply();
       else
         MakeHole<NumericType, D>(domain, 1., 10., 10., 2.5, 5., 10., 0.0, false,
-                                 etch, Material::Si, HoleShape::Full)
+                                 etch, Material::Si, HoleShape::FULL)
             .apply();
 
       Vec2D<NumericType> offset{};
@@ -94,8 +94,6 @@ template <typename NumericType, int D> void RunTest() {
 
       VC_TEST_ASSERT(model->getSurfaceModel());
       VC_TEST_ASSERT(model->getVelocityField());
-      VC_TEST_ASSERT(model->getVelocityField()->getTranslationFieldOptions() ==
-                     0);
 
       Process<NumericType, D>(domain, model, 1.0).apply();
 

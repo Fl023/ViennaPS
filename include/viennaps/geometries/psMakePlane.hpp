@@ -42,14 +42,15 @@ public:
     domain_->setup(gridDelta, xExtent, yExtent,
                    periodicBoundary ? BoundaryType::PERIODIC_BOUNDARY
                                     : BoundaryType::REFLECTIVE_BOUNDARY);
+    geometryFactory_.setup(domain_->getSetup());
   }
 
   void apply() {
     if (add_) {
       if (!domain_->getLevelSets().back()) {
         Logger::getInstance()
-            .addWarning("MakePlane: Plane can only be added to already "
-                        "existing geometry.")
+            .addError("MakePlane: Plane can only be added to already "
+                      "existing geometry.")
             .print();
         return;
       }
@@ -62,5 +63,7 @@ public:
     domain_->insertNextLevelSetAsMaterial(substrate, material_);
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(MakePlane)
 
 } // namespace viennaps

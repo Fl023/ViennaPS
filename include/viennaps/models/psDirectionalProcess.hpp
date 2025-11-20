@@ -1,7 +1,7 @@
 #pragma once
 
+#include "../process/psProcessModel.hpp"
 #include "../psMaterials.hpp"
-#include "../psProcessModel.hpp"
 
 #include <lsCalculateVisibilities.hpp>
 #include <vcVectorType.hpp>
@@ -40,7 +40,7 @@ template <class NumericType> struct RateSet {
     std::cout << "Isotropic Velocity: " << isotropicVelocity << std::endl;
     std::cout << "Mask Materials: ";
     for (const auto &mask : maskMaterials) {
-      std::cout << MaterialMap::getMaterialName(mask) << " ";
+      std::cout << MaterialMap::toString(mask) << " ";
     }
     std::cout << std::endl;
     std::cout << "Calculate Visibility: " << calculateVisibility << std::endl;
@@ -103,10 +103,6 @@ public:
     return vectorVelocity;
   }
 
-  // The translation field should be disabled when using a surface model
-  // which only depends on an analytic velocity field
-  int getTranslationFieldOptions() const override { return 0; }
-
   void prepare(SmartPointer<Domain<NumericType, D>> domain,
                SmartPointer<std::vector<NumericType>> velocities,
                const NumericType processTime) override {
@@ -117,8 +113,8 @@ public:
     auto surfaceLS = domain->getLevelSets().back();
     for (unsigned rateSetID = 0; rateSetID < rateSets_.size(); ++rateSetID) {
       auto &rateSet = rateSets_[rateSetID];
-
       if (rateSet.calculateVisibility) {
+
         std::string label = "Visibilities_" + std::to_string(rateSetID);
         viennals::CalculateVisibilities<NumericType, D>(
             surfaceLS, rateSet.direction, label)
@@ -153,14 +149,14 @@ protected:
 
 /// Directional rate with multiple rate sets and masking materials.
 template <typename NumericType, int D>
-class DirectionalProcess : public ProcessModel<NumericType, D> {
+class DirectionalProcess : public ProcessModelCPU<NumericType, D> {
 public:
   using RateSet = impl::RateSet<NumericType>;
 
   DirectionalProcess(const Vec3D<NumericType> &direction,
                      NumericType directionalVelocity,
                      NumericType isotropicVelocity = 0.,
-                     const Material maskMaterial = Material::Mask,
+                     Material maskMaterial = Material::Mask,
                      bool calculateVisibility = true) {
     std::vector<RateSet> rateSets;
     rateSets.emplace_back(direction, directionalVelocity, isotropicVelocity,
@@ -207,7 +203,31 @@ private:
     this->setSurfaceModel(surfModel);
     this->setVelocityField(velField);
     this->setProcessName("DirectionalProcess");
+
+    // Store process data
+    processMetaData["DirectionalVelocity"] = std::vector<double>();
+    processMetaData["IsotropicVelocity"] = std::vector<double>();
+    processMetaData["MaskMaterials"] = std::vector<double>();
+    processMetaData["CalculateVisibility"] = std::vector<double>();
+    int i = 0;
+    for (const auto &rateSet : rateSets) {
+      processMetaData["DirectionalVelocity"].push_back(
+          rateSet.directionalVelocity);
+      processMetaData["IsotropicVelocity"].push_back(rateSet.isotropicVelocity);
+      for (const auto &maskMaterial : rateSet.maskMaterials) {
+        processMetaData["MaskMaterials"].push_back(
+            static_cast<double>(maskMaterial));
+      }
+      processMetaData["CalculateVisibility"].push_back(
+          static_cast<double>(rateSet.calculateVisibility ? 1 : 0));
+      processMetaData["Direction " + std::to_string(i++)] = std::vector<double>{
+          rateSet.direction[0], rateSet.direction[1], rateSet.direction[2]};
+    }
   }
+
+  using ProcessModelCPU<NumericType, D>::processMetaData;
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(DirectionalProcess)
 
 } // namespace viennaps

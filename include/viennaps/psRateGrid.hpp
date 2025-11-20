@@ -7,17 +7,11 @@
 
 #include <compact/psCSVReader.hpp>
 
+#include "psPreCompileMacros.hpp"
+
 namespace viennaps {
 
 using namespace viennacore;
-
-template <typename T> struct Vec2DHash {
-  std::size_t operator()(const Vec2D<T> &v) const {
-    auto h1 = std::hash<T>{}(v[0]);
-    auto h2 = std::hash<T>{}(v[1]);
-    return h1 ^ (h2 << 1);
-  }
-};
 
 template <typename NumericType, int D> class RateGrid {
 public:
@@ -112,7 +106,8 @@ public:
 
 private:
   std::vector<std::array<NumericType, D>> points;
-  std::unordered_map<Vec2D<NumericType>, NumericType, Vec2DHash<NumericType>>
+  std::unordered_map<Vec2D<NumericType>, NumericType,
+                     VectorHash<NumericType, 2>>
       rateMap;
   std::set<NumericType> xVals, yVals;
 
@@ -254,5 +249,7 @@ private:
     return (wSum > 0) ? wrSum / wSum : 0.0;
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(RateGrid)
 
 } // namespace viennaps

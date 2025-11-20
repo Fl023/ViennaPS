@@ -22,22 +22,12 @@ endif()
 set(VIENNAPS_GPU_INCLUDE
     "${PROJECT_SOURCE_DIR}/include"
     CACHE STRING "Includes for ViennaPS GPU processing.")
-set(VIENNAPS_PIPELINE_DIR
-    "${PROJECT_SOURCE_DIR}/include/pipelines"
-    CACHE STRING "Pre-built pipelines for OptiX")
 set(VIENNAPS_CUDA_KERNELS
     ""
     CACHE STRING "ViennaPS CUDA kernel source files.")
 include("../cmake/generate_ptx.cmake")
 
 if(VIENNAPS_BUILD_EXAMPLES)
-  message(STATUS "[ViennaPS] Adding GPU Examples")
-  add_subdirectory(examples)
+  message(STATUS "[ViennaPS] Adding GPU Benchmarks")
   add_subdirectory(benchmark)
 endif(VIENNAPS_BUILD_EXAMPLES)
-
-# TODO: Add tests for GPU
-# if(VIENNAPS_BUILD_TESTS)
-#   message(STATUS "[ViennaPS] Adding GPU Tests")
-#   add_subdirectory(tests)
-# endif()

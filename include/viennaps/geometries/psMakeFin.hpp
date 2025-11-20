@@ -69,6 +69,7 @@ public:
   void apply() {
     domain_->clear(); // this does not clear the setup
     domain_->getSetup().check();
+    geometryFactory_.setup(domain_->getSetup());
 
     if (maskHeight_ > 0.) {
       auto position = std::array<NumericType, D>{0.};
@@ -96,5 +97,7 @@ public:
     domain_->insertNextLevelSetAsMaterial(substrate, material_);
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(MakeFin)
 
 } // namespace viennaps

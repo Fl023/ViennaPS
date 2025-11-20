@@ -6,12 +6,13 @@
 #include <string>
 #include <vector>
 
+#include "../process/psProcessModel.hpp"
+#include "../process/psSurfaceModel.hpp"
+#include "../psDomain.hpp"
+#include "../psMaterials.hpp"
+#include "../psRateGrid.hpp"
+
 #include <lsCalculateVisibilities.hpp>
-#include <psDomain.hpp>
-#include <psMaterials.hpp>
-#include <psProcessModel.hpp>
-#include <psRateGrid.hpp>
-#include <psSurfaceModel.hpp>
 
 namespace viennaps {
 
@@ -20,11 +21,11 @@ using namespace viennacore;
 namespace impl {
 
 template <typename NumericType, int D>
-class velocityFieldFromFile : public VelocityField<NumericType, D> {
+class VelocityFieldFromFile : public VelocityField<NumericType, D> {
 public:
   using Interpolation = typename RateGrid<NumericType, D>::Interpolation;
 
-  velocityFieldFromFile(const std::string &ratesFile,
+  VelocityFieldFromFile(const std::string &ratesFile,
                         const Vec3D<NumericType> &dir,
                         const Vec2D<NumericType> &off,
                         const NumericType isoScale = 0.,
@@ -47,7 +48,7 @@ public:
 
   NumericType getScalarVelocity(const Vec3D<NumericType> &coordinate,
                                 int material,
-                                const Vec3D<NumericType> & /*normalVector*/,
+                                const Vec3D<NumericType> &normalVector,
                                 unsigned long pointId) override {
     if (isMaskMaterial(material))
       return 0.;
@@ -82,11 +83,9 @@ public:
     return {0., 0., 0.};
   }
 
-  int getTranslationFieldOptions() const override { return 0; }
-
   void prepare(SmartPointer<Domain<NumericType, D>> domain,
-               SmartPointer<std::vector<NumericType>> /*velocities*/,
-               const NumericType /*processTime*/) override {
+               SmartPointer<std::vector<NumericType>> velocities,
+               const NumericType processTime) override {
     visibilities.clear();
 
     auto surfaceLS = domain->getLevelSets().back();
@@ -141,11 +140,11 @@ private:
 } // namespace impl
 
 template <typename NumericType, int D>
-class CSVFileProcess : public ProcessModel<NumericType, D> {
+class CSVFileProcess : public ProcessModelCPU<NumericType, D> {
 public:
   CSVFileProcess(const std::string &ratesFile, const Vec3D<NumericType> &dir,
-                 const Vec2D<NumericType> &off, const NumericType isoScale = 0.,
-                 const NumericType dirScale = 1.,
+                 const Vec2D<NumericType> &off, NumericType isoScale = 0.,
+                 NumericType dirScale = 1.,
                  const std::vector<Material> &masks = {Material::Mask},
                  bool calcVis = true) {
 
@@ -160,7 +159,7 @@ public:
     Vec3D<NumericType> normDir = normalizeVec3D(dir);
 
     auto velField =
-        SmartPointer<impl::velocityFieldFromFile<NumericType, D>>::New(
+        SmartPointer<impl::VelocityFieldFromFile<NumericType, D>>::New(
             ratesFile, normDir, off, isoScale, dirScale, masks, calcVis);
 
     auto surfModel = SmartPointer<SurfaceModel<NumericType>>::New();
@@ -172,7 +171,7 @@ public:
 
   void setIDWNeighbors(const int k = 4) {
     auto velField =
-        std::dynamic_pointer_cast<impl::velocityFieldFromFile<NumericType, D>>(
+        std::dynamic_pointer_cast<impl::VelocityFieldFromFile<NumericType, D>>(
             this->getVelocityField());
     if (velField)
       velField->setIDWNeighbors(k);
@@ -180,17 +179,17 @@ public:
 
   void setInterpolationMode(const std::string &str) {
     auto velField =
-        std::dynamic_pointer_cast<impl::velocityFieldFromFile<NumericType, D>>(
+        std::dynamic_pointer_cast<impl::VelocityFieldFromFile<NumericType, D>>(
             this->getVelocityField());
     if (velField)
       velField->setInterpolationMode(str);
   }
 
   void setInterpolationMode(
-      typename impl::velocityFieldFromFile<NumericType, D>::Interpolation
+      typename impl::VelocityFieldFromFile<NumericType, D>::Interpolation
           mode) {
     auto velField =
-        std::dynamic_pointer_cast<impl::velocityFieldFromFile<NumericType, D>>(
+        std::dynamic_pointer_cast<impl::VelocityFieldFromFile<NumericType, D>>(
             this->getVelocityField());
     if (velField)
       velField->setInterpolationMode(mode);
@@ -199,7 +198,7 @@ public:
   void setCustomInterpolator(
       std::function<NumericType(const Vec3D<NumericType> &)> func) {
     auto velField =
-        std::dynamic_pointer_cast<impl::velocityFieldFromFile<NumericType, D>>(
+        std::dynamic_pointer_cast<impl::VelocityFieldFromFile<NumericType, D>>(
             this->getVelocityField());
     if (velField)
       velField->setCustomInterpolator(func);
@@ -207,11 +206,13 @@ public:
 
   void setOffset(const Vec2D<NumericType> &off) {
     auto velField =
-        std::dynamic_pointer_cast<impl::velocityFieldFromFile<NumericType, D>>(
+        std::dynamic_pointer_cast<impl::VelocityFieldFromFile<NumericType, D>>(
             this->getVelocityField());
     if (velField)
       velField->setOffset(off);
   }
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(CSVFileProcess)
 
 } // namespace viennaps

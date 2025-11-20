@@ -4,10 +4,11 @@
 #include <rayReflection.hpp>
 #include <rayUtil.hpp>
 
-#include "../psProcessModel.hpp"
+#include "../process/psProcessModel.hpp"
 #include "../psUnits.hpp"
 
 #include "psCF4O2Parameters.hpp"
+#include "psIonModelUtil.hpp"
 
 namespace viennaps {
 
@@ -79,12 +80,14 @@ public:
       spRate->resize(numPoints);
       chRate->resize(numPoints);
     }
+
     bool stop = false;
 
+#pragma omp parallel for reduction(|| : stop)
     for (size_t i = 0; i < numPoints; ++i) {
-      if (coordinates[i][D - 1] < params.etchStopDepth) {
+      if (coordinates[i][D - 1] < params.etchStopDepth || stop) {
         stop = true;
-        break;
+        continue; // skip points below etch stop depth
       }
 
       const auto sputterRate = ionSputterFlux->at(i) * params.ionFlux;
@@ -173,6 +176,7 @@ public:
     auto cCoverage = coverages->getScalarData("cCoverage");
     cCoverage->resize(numPoints);
 
+#pragma omp parallel for
     for (size_t i = 0; i < numPoints; ++i) {
       auto Gb_e = etchantFlux->at(i) * params.etchantFlux;
       auto Gb_o = oxygenFlux.at(i) * params.oxygenFlux;
@@ -298,22 +302,8 @@ public:
         std::acos(std::max(std::min(cosTheta, static_cast<NumericType>(1.)),
                            static_cast<NumericType>(0.)));
 
-    // Small incident angles are reflected with the energy fraction centered at
-    // 0
-    NumericType Eref_peak;
-    if (incAngle >= params.Ions.inflectAngle) {
-      Eref_peak = (1 - (1 - A_energy) * (M_PI_2 - incAngle) /
-                           (M_PI_2 - params.Ions.inflectAngle));
-    } else {
-      Eref_peak = A_energy * std::pow(incAngle / params.Ions.inflectAngle,
-                                      params.Ions.n_l);
-    }
-    // Gaussian distribution around the Eref_peak scaled by the particle energy
-    NumericType NewEnergy;
-    std::normal_distribution<NumericType> normalDist(E * Eref_peak, 0.1 * E);
-    do {
-      NewEnergy = normalDist(Rng);
-    } while (NewEnergy > E || NewEnergy < 0.);
+    NumericType NewEnergy = updateEnergy(
+        Rng, E, incAngle, A_energy, params.Ions.inflectAngle, params.Ions.n_l);
 
     NumericType sticking = 0.;
     // NumericType sticking = 1.;
@@ -332,16 +322,12 @@ public:
           M_PI_2 - std::min(incAngle, params.Ions.minAngle));
       return std::pair<NumericType, Vec3D<NumericType>>{sticking, direction};
     } else {
-      return std::pair<NumericType, Vec3D<NumericType>>{
-          1., Vec3D<NumericType>{0., 0., 0.}};
+      return VIENNARAY_PARTICLE_STOP;
     }
   }
   void initNew(RNG &rngState) override {
-    std::normal_distribution<NumericType> normalDist{params.Ions.meanEnergy,
-                                                     params.Ions.sigmaEnergy};
-    do {
-      E = normalDist(rngState);
-    } while (E <= 0.);
+    E = initNormalDistEnergy(rngState, params.Ions.meanEnergy,
+                             params.Ions.sigmaEnergy);
   }
   NumericType getSourceDistributionPower() const override {
     return params.Ions.exponent;
@@ -593,20 +579,18 @@ private:
 } // namespace impl
 
 template <typename NumericType, int D>
-class CF4O2Etching final : public ProcessModel<NumericType, D> {
+class CF4O2Etching final : public ProcessModelCPU<NumericType, D> {
 public:
   CF4O2Etching() { initializeModel(); }
 
   // All flux values are in units 1e15 / cm²
-  CF4O2Etching(const double ionFlux, const double etchantFlux,
-               const double oxygenFlux, const double polymerFlux,
-               const NumericType meanEnergy /* eV */,
-               const NumericType sigmaEnergy /* eV */, // 5 parameters
-               const NumericType ionExponent = 300.,
-               const NumericType oxySputterYield = 2.,
-               const NumericType polySputterYield = 2.,
-               const NumericType etchStopDepth =
-                   std::numeric_limits<NumericType>::lowest()) {
+  CF4O2Etching(
+      double ionFlux, double etchantFlux, double oxygenFlux, double polymerFlux,
+      NumericType meanEnergy,  // eV
+      NumericType sigmaEnergy, // eV
+      NumericType ionExponent = 300., NumericType oxySputterYield = 2.,
+      NumericType polySputterYield = 2.,
+      NumericType etchStopDepth = std::numeric_limits<NumericType>::lowest()) {
     params.ionFlux = ionFlux;
     params.etchantFlux = etchantFlux;
     params.oxygenFlux = oxygenFlux;
@@ -651,7 +635,7 @@ private:
         SmartPointer<impl::CF4O2SurfaceModel<NumericType, D>>::New(params);
 
     // velocity field
-    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New(2);
+    auto velField = SmartPointer<DefaultVelocityField<NumericType, D>>::New();
 
     this->setSurfaceModel(surfModel);
     this->setVelocityField(velField);
@@ -663,9 +647,16 @@ private:
       this->insertNextParticleType(oxygen);
     if (params.polymerFlux > 0)
       this->insertNextParticleType(polymer);
+
+    this->processMetaData = params.toProcessMetaData();
+    this->processMetaData["Units"] = std::vector<double>{
+        static_cast<double>(units::Length::getInstance().getUnit()),
+        static_cast<double>(units::Time::getInstance().getUnit())};
   }
 
   CF4O2Parameters<NumericType> params;
 };
+
+PS_PRECOMPILE_PRECISION_DIMENSION(CF4O2Etching)
 
 } // namespace viennaps
